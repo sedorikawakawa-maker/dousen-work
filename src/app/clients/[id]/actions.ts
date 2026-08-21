@@ -4,6 +4,12 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { canViewFinance } from "@/lib/auth/roles";
+import {
+  generateTasksForRule,
+  regenerateTasksForRule,
+  removeUnstartedFutureTasksForRule,
+} from "@/lib/scheduling/generate";
+import type { WeekdayRule } from "@/lib/scheduling/weekdayRule";
 import type {
   AssignmentType,
   ContractStatus,
@@ -113,6 +119,15 @@ export async function updateAssignmentAction(formData: FormData) {
     if (error) {
       redirect(editUrl(clientId, { error: error.message, section: "assignment" }));
     }
+
+    // 主担当変更時: 未完了の制作タスクは新主担当へ引き継ぐ（過去実績の担当者は変更しない）
+    if (assignmentType === "primary") {
+      await supabase
+        .from("production_tasks")
+        .update({ assignee_staff_id: staffId })
+        .eq("client_id", clientId)
+        .neq("status", "completed");
+    }
   }
 
   redirect(editUrl(clientId, { saved: "assignment" }));
@@ -210,44 +225,104 @@ export async function deleteClientCredentialAction(formData: FormData) {
   redirect(editUrl(clientId, { saved: "credentials" }));
 }
 
-export async function addScheduleRuleAction(formData: FormData) {
+function parseWeekdayRuleFromForm(formData: FormData): WeekdayRule | null {
+  const mode = String(formData.get("weekdayMode") ?? "weekly");
+
+  if (mode === "nth_weekday") {
+    const rules: { nth: number; weekday: number }[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const nthRaw = formData.get(`nthRow${i}Nth`);
+      const weekdayRaw = formData.get(`nthRow${i}Weekday`);
+      if (!nthRaw || !weekdayRaw) continue;
+      const nth = Number(nthRaw);
+      const weekday = Number(weekdayRaw);
+      if (Number.isNaN(nth) || Number.isNaN(weekday)) continue;
+      rules.push({ nth, weekday });
+    }
+    if (rules.length === 0) return null;
+    return { mode: "nth_weekday", rules };
+  }
+
+  const weekdays = formData
+    .getAll("weeklyWeekday")
+    .map((v) => Number(v))
+    .filter((v) => !Number.isNaN(v));
+  if (weekdays.length === 0) return null;
+  return { mode: "weekly", weekdays };
+}
+
+function numberOrNull(value: FormDataEntryValue | null): number | null {
+  const text = emptyToNull(value);
+  return text === null ? null : Number(text);
+}
+
+/**
+ * 投稿種別ごとの投稿ルールを保存する。
+ * 既存の有効ルール(ruleId指定あり)は同じ行を更新し、未着手・未来・未手動変更の
+ * タスクのみ削除→再生成する。新規(ruleIdなし)は新しいルールを作成して生成する。
+ */
+export async function saveScheduleRuleAction(formData: FormData) {
   const clientId = String(formData.get("clientId"));
+  const postType = String(formData.get("postType")) as PostType;
+  const existingRuleId = emptyToNull(formData.get("ruleId"));
   const supabase = await createSupabaseServerClient();
 
-  let weekdayRule: Record<string, unknown> = {};
-  const raw = String(formData.get("weekdayRule") ?? "").trim();
-  if (raw) {
-    try {
-      weekdayRule = JSON.parse(raw);
-    } catch {
+  const weekdayRule = parseWeekdayRuleFromForm(formData);
+  if (!weekdayRule) {
+    redirect(
+      editUrl(clientId, { error: "曜日ルールを1つ以上設定してください", section: "schedule" }),
+    );
+  }
+
+  const payload = {
+    client_id: clientId,
+    post_type: postType,
+    monthly_target: Number(formData.get("monthlyTarget") ?? 0),
+    weekday_rule: weekdayRule as unknown as Record<string, unknown>,
+    production_lead_days: numberOrNull(formData.get("productionLeadDays")),
+    wcheck_lead_days: numberOrNull(formData.get("wcheckLeadDays")),
+    client_confirm_lead_days: numberOrNull(formData.get("clientConfirmLeadDays")),
+    valid_from: String(formData.get("validFrom") || new Date().toISOString().slice(0, 10)),
+  };
+
+  if (existingRuleId) {
+    const { data: updatedRule, error } = await supabase
+      .from("posting_schedule_rules")
+      .update(payload)
+      .eq("id", existingRuleId)
+      .select("*")
+      .single();
+
+    if (error || !updatedRule) {
       redirect(
         editUrl(clientId, {
-          error: "曜日ルールのJSON形式が不正です",
+          error: error?.message ?? "更新に失敗しました",
           section: "schedule",
         }),
       );
     }
+
+    await regenerateTasksForRule(supabase, updatedRule);
+  } else {
+    const { data: newRule, error } = await supabase
+      .from("posting_schedule_rules")
+      .insert({ ...payload, valid_to: null, is_active: true })
+      .select("*")
+      .single();
+
+    if (error || !newRule) {
+      redirect(
+        editUrl(clientId, {
+          error: error?.message ?? "登録に失敗しました",
+          section: "schedule",
+        }),
+      );
+    }
+
+    await generateTasksForRule(supabase, newRule);
   }
 
-  const { error } = await supabase.from("posting_schedule_rules").insert({
-    client_id: clientId,
-    post_type: String(formData.get("postType")) as PostType,
-    monthly_target: Number(formData.get("monthlyTarget") ?? 0),
-    weekday_rule: weekdayRule,
-    production_lead_days: numberOrNull(formData.get("productionLeadDays")),
-    wcheck_lead_days: numberOrNull(formData.get("wcheckLeadDays")),
-    client_confirm_lead_days: numberOrNull(formData.get("clientConfirmLeadDays")),
-    valid_from: String(formData.get("validFrom") ?? new Date().toISOString().slice(0, 10)),
-    valid_to: null,
-    is_active: true,
-  });
-
-  redirect(
-    editUrl(
-      clientId,
-      error ? { error: error.message, section: "schedule" } : { saved: "schedule" },
-    ),
-  );
+  redirect(editUrl(clientId, { saved: "schedule" }));
 }
 
 export async function deactivateScheduleRuleAction(formData: FormData) {
@@ -255,6 +330,8 @@ export async function deactivateScheduleRuleAction(formData: FormData) {
   const ruleId = String(formData.get("ruleId"));
   const supabase = await createSupabaseServerClient();
   const today = new Date().toISOString().slice(0, 10);
+
+  await removeUnstartedFutureTasksForRule(supabase, ruleId);
 
   await supabase
     .from("posting_schedule_rules")
@@ -264,14 +341,36 @@ export async function deactivateScheduleRuleAction(formData: FormData) {
   redirect(editUrl(clientId, { saved: "schedule" }));
 }
 
+export async function updateTaskScheduledDateAction(formData: FormData) {
+  const clientId = String(formData.get("clientId"));
+  const taskId = String(formData.get("taskId"));
+  const newDate = String(formData.get("scheduledPostDate"));
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("production_tasks")
+    .update({ scheduled_post_date: newDate })
+    .eq("id", taskId);
+
+  const search = new URLSearchParams(
+    error ? { error: error.message } : { saved: "1" },
+  ).toString();
+  redirect(`/clients/${clientId}?tab=schedule&${search}`);
+}
+
 export async function updateReminderSettingAction(formData: FormData) {
   const clientId = String(formData.get("clientId"));
-  const reminderEnabled = formData.get("reminderEnabled") === "on";
+  const materialReminderEnabled = formData.get("materialReminderEnabled") === "on";
+  const clientConfirmationReminderEnabled =
+    formData.get("clientConfirmationReminderEnabled") === "on";
   const supabase = await createSupabaseServerClient();
 
   const { error } = await supabase
     .from("clients")
-    .update({ reminder_enabled: reminderEnabled })
+    .update({
+      material_reminder_enabled: materialReminderEnabled,
+      client_confirmation_reminder_enabled: clientConfirmationReminderEnabled,
+    })
     .eq("id", clientId);
 
   redirect(
@@ -280,9 +379,4 @@ export async function updateReminderSettingAction(formData: FormData) {
       error ? { error: error.message, section: "reminder" } : { saved: "reminder" },
     ),
   );
-}
-
-function numberOrNull(value: FormDataEntryValue | null): number | null {
-  const text = emptyToNull(value);
-  return text === null ? null : Number(text);
 }

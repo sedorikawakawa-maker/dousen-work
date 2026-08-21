@@ -99,3 +99,15 @@ export async function getClientDetail(supabase: TypedClient, clientId: string) {
 }
 
 export type ClientDetail = Awaited<ReturnType<typeof getClientDetail>>;
+
+export async function listUpcomingProductionTasks(supabase: TypedClient, clientId: string) {
+  const { data, error } = await supabase
+    .from("production_tasks")
+    .select("*")
+    .eq("client_id", clientId)
+    .neq("status", "completed")
+    .order("scheduled_post_date", { ascending: true, nullsFirst: false });
+
+  if (error) throw error;
+  return data ?? [];
+}

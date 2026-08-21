@@ -1,14 +1,19 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getClientDetail, listActiveStaff } from "@/lib/clients/queries";
+import { getClientDetail, listActiveStaff, listUpcomingProductionTasks } from "@/lib/clients/queries";
 import {
   ASSIGNMENT_TYPE_LABELS,
   CLIENT_CURRENT_STATUS_LABELS,
   CONTRACT_STATUS_LABELS,
   LINK_TYPE_LABELS,
   POST_TYPE_LABELS,
+  PRODUCTION_TASK_STATUS_LABELS,
 } from "@/lib/clients/labels";
+import { describeWeekdayRule, isWeekdayRule, type WeekdayRule } from "@/lib/scheduling/weekdayRule";
+import { ensureRollingTasksForClient, getMonthlySummary } from "@/lib/scheduling/generate";
+import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
+import { updateTaskScheduledDateAction } from "./actions";
 
 const TABS = [
   { key: "overview", label: "概要" },
@@ -59,6 +64,31 @@ export default async function ClientDetailPage({
     staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]),
   );
 
+  let monthlySummary: Awaited<ReturnType<typeof getMonthlySummary>> = [];
+  let upcomingTasks: Awaited<ReturnType<typeof listUpcomingProductionTasks>> = [];
+  if (activeTab === "schedule") {
+    await ensureRollingTasksForClient(supabase, id);
+    [monthlySummary, upcomingTasks] = await Promise.all([
+      getMonthlySummary(supabase, id),
+      listUpcomingProductionTasks(supabase, id),
+    ]);
+  }
+
+  const materialWaitDays =
+    client.current_status === "material_waiting"
+      ? getMaterialWaitElapsedDays(client.material_wait_started_at)
+      : null;
+  const materialWaitLevel =
+    client.current_status === "material_waiting"
+      ? getMaterialWaitLevel(client.material_wait_started_at)
+      : "none";
+  const materialWaitBadgeClass =
+    materialWaitLevel === "urgent"
+      ? "bg-red-100 text-red-700"
+      : materialWaitLevel === "warning"
+        ? "bg-yellow-100 text-yellow-700"
+        : "bg-neutral-100 text-neutral-600";
+
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 px-4 py-8">
       <div className="flex items-start justify-between">
@@ -104,10 +134,17 @@ export default async function ClientDetailPage({
         {activeTab === "overview" ? (
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <InfoRow label="契約状況" value={CONTRACT_STATUS_LABELS[client.contract_status]} />
-            <InfoRow
-              label="現在ステータス"
-              value={CLIENT_CURRENT_STATUS_LABELS[client.current_status]}
-            />
+            <div>
+              <dt className="text-xs text-neutral-400">現在ステータス</dt>
+              <dd className="flex items-center gap-2 text-neutral-900">
+                {CLIENT_CURRENT_STATUS_LABELS[client.current_status]}
+                {materialWaitDays !== null ? (
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${materialWaitBadgeClass}`}>
+                    素材待ち{materialWaitDays}日経過
+                  </span>
+                ) : null}
+              </dd>
+            </div>
             <InfoRow label="電話番号" value={client.phone ?? "—"} />
             <InfoRow label="メールアドレス" value={client.email ?? "—"} />
             <InfoRow label="先方担当者" value={client.contact_name ?? "—"} />
@@ -171,20 +208,124 @@ export default async function ClientDetailPage({
         ) : null}
 
         {activeTab === "schedule" ? (
-          <ul className="flex flex-col gap-2 text-sm">
-            {detail.scheduleRules.map((rule) => (
-              <li key={rule.id} className="rounded-md border border-neutral-200 px-3 py-2">
-                {POST_TYPE_LABELS[rule.post_type]} / 月{rule.monthly_target}本
-                {rule.is_active ? "" : "（無効）"}
-                <span className="ml-2 text-xs text-neutral-400">
-                  {rule.valid_from} 〜 {rule.valid_to ?? "継続中"}
-                </span>
-              </li>
-            ))}
-            {detail.scheduleRules.length === 0 ? (
-              <li className="text-neutral-400">投稿ルールが未登録です。</li>
-            ) : null}
-          </ul>
+          <div className="flex flex-col gap-8">
+            <div>
+              <h3 className="mb-2 text-xs font-semibold text-neutral-500">現在のルール</h3>
+              <ul className="flex flex-col gap-2 text-sm">
+                {detail.scheduleRules
+                  .filter((rule) => rule.is_active)
+                  .map((rule) => (
+                    <li key={rule.id} className="rounded-md border border-neutral-200 px-3 py-2">
+                      {POST_TYPE_LABELS[rule.post_type]} / 月{rule.monthly_target}本 /{" "}
+                      {isWeekdayRule(rule.weekday_rule)
+                        ? describeWeekdayRule(rule.weekday_rule as WeekdayRule)
+                        : "曜日未設定"}
+                      <span className="ml-2 text-xs text-neutral-400">
+                        {rule.valid_from} 〜 {rule.valid_to ?? "継続中"}
+                      </span>
+                    </li>
+                  ))}
+                {detail.scheduleRules.filter((rule) => rule.is_active).length === 0 ? (
+                  <li className="text-neutral-400">
+                    投稿ルールが未登録です。編集画面から設定してください。
+                  </li>
+                ) : null}
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold text-neutral-500">
+                月間本数（通常＋持越し）
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-neutral-200 text-neutral-500">
+                      <th className="px-2 py-1">月</th>
+                      <th className="px-2 py-1">種別</th>
+                      <th className="px-2 py-1">通常目標</th>
+                      <th className="px-2 py-1">持越し</th>
+                      <th className="px-2 py-1">必要本数</th>
+                      <th className="px-2 py-1">実績</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlySummary.flatMap((month) =>
+                      (["reel", "feed", "story"] as const)
+                        .filter((postType) => month.byPostType[postType].target > 0 || month.byPostType[postType].carryover > 0)
+                        .map((postType) => {
+                          const row = month.byPostType[postType];
+                          return (
+                            <tr key={`${month.year}-${month.month0}-${postType}`} className="border-b border-neutral-100">
+                              <td className="px-2 py-1">{month.label}</td>
+                              <td className="px-2 py-1">{POST_TYPE_LABELS[postType]}</td>
+                              <td className="px-2 py-1">{row.target}</td>
+                              <td className="px-2 py-1">{row.carryover}</td>
+                              <td className="px-2 py-1 font-medium">{row.required}</td>
+                              <td className="px-2 py-1">{row.actual}</td>
+                            </tr>
+                          );
+                        }),
+                    )}
+                  </tbody>
+                </table>
+                {monthlySummary.every((m) =>
+                  (["reel", "feed", "story"] as const).every(
+                    (postType) => m.byPostType[postType].target === 0 && m.byPostType[postType].carryover === 0,
+                  ),
+                ) ? (
+                  <p className="mt-2 text-sm text-neutral-400">対象データがありません。</p>
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold text-neutral-500">
+                今後の制作タスク（未完了）
+              </h3>
+              <ul className="flex flex-col gap-2 text-sm">
+                {upcomingTasks.map((task) => (
+                  <li
+                    key={task.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-neutral-200 px-3 py-2"
+                  >
+                    <span>
+                      {task.is_carryover ? (
+                        <span className="mr-2 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                          持越し
+                        </span>
+                      ) : null}
+                      {task.title} / {PRODUCTION_TASK_STATUS_LABELS[task.status]}
+                      {task.assignee_staff_id ? (
+                        <span className="ml-2 text-xs text-neutral-400">
+                          担当: {staffNameById.get(task.assignee_staff_id) ?? "不明"}
+                        </span>
+                      ) : null}
+                    </span>
+                    <form action={updateTaskScheduledDateAction} className="flex items-center gap-2">
+                      <input type="hidden" name="clientId" value={id} />
+                      <input type="hidden" name="taskId" value={task.id} />
+                      <input
+                        type="date"
+                        name="scheduledPostDate"
+                        defaultValue={task.scheduled_post_date ?? ""}
+                        className="rounded-md border border-neutral-300 px-2 py-1 text-sm"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-neutral-300 px-2 py-1 text-xs text-neutral-700"
+                      >
+                        この1件だけ日付変更
+                      </button>
+                    </form>
+                  </li>
+                ))}
+                {upcomingTasks.length === 0 ? (
+                  <li className="text-neutral-400">未完了のタスクはありません。</li>
+                ) : null}
+              </ul>
+            </div>
+          </div>
         ) : null}
 
         {activeTab === "links" ? (

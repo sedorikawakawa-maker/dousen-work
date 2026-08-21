@@ -12,19 +12,25 @@ import {
   POST_TYPE_LABELS,
   POST_TYPE_OPTIONS,
 } from "@/lib/clients/labels";
+import { WEEKDAY_LABELS, isWeekdayRule, type WeekdayRule } from "@/lib/scheduling/weekdayRule";
+import type { Database, PostType } from "@/lib/supabase/database.types";
 import {
   addClientCredentialAction,
   addClientLinkAction,
-  addScheduleRuleAction,
   deactivateScheduleRuleAction,
   deleteClientCredentialAction,
   deleteClientLinkAction,
+  saveScheduleRuleAction,
   updateAssignmentAction,
   updateBasicInfoAction,
   updateContractAction,
   updateOperationProfileAction,
   updateReminderSettingAction,
 } from "../actions";
+
+type ScheduleRuleRow = Database["public"]["Tables"]["posting_schedule_rules"]["Row"];
+
+const NTH_ROW_COUNT = 4;
 
 const SECTION_TITLES: Record<string, string> = {
   basic: "基本情報",
@@ -277,81 +283,30 @@ export default async function ClientEditPage({
 
       {/* 投稿スケジュール */}
       <Section title="投稿スケジュール">
-        <div className="flex flex-col gap-4">
-          {detail.scheduleRules.length > 0 ? (
-            <ul className="flex flex-col gap-2">
-              {detail.scheduleRules.map((rule) => (
-                <li
-                  key={rule.id}
-                  className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2 text-sm"
-                >
-                  <span>
-                    {POST_TYPE_LABELS[rule.post_type]} / 月{rule.monthly_target}本
-                    {rule.is_active ? "" : "（無効）"}
-                  </span>
-                  {rule.is_active ? (
-                    <form action={deactivateScheduleRuleAction}>
-                      <input type="hidden" name="clientId" value={id} />
-                      <input type="hidden" name="ruleId" value={rule.id} />
-                      <button type="submit" className="text-xs text-red-600 underline">
-                        無効化
-                      </button>
-                    </form>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-neutral-400">投稿ルールが未登録です。</p>
-          )}
-
-          <form action={addScheduleRuleAction} className="flex flex-col gap-3 border-t border-neutral-100 pt-4">
-            <input type="hidden" name="clientId" value={id} />
-            <p className="text-xs text-neutral-500">
-              ルールを登録すると、将来のPhaseで制作タスクの自動生成に利用されます（本Phaseではデータ登録のみ）。
-            </p>
-            <div className="grid grid-cols-2 gap-4">
-              <label className="text-sm font-medium text-neutral-700">
-                投稿種別
-                <select
-                  name="postType"
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
-                >
-                  {POST_TYPE_OPTIONS.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <Field label="月間目標本数" name="monthlyTarget" type="number" defaultValue="4" />
-            </div>
-            <label className="text-sm font-medium text-neutral-700">
-              曜日ルール（JSON）
-              <input
-                name="weekdayRule"
-                placeholder='{"mode":"weekly","weekdays":[2]}'
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 font-mono text-sm"
-              />
-            </label>
-            <div className="grid grid-cols-3 gap-4">
-              <Field label="制作リード日数" name="productionLeadDays" type="number" />
-              <Field label="Wチェックリード日数" name="wcheckLeadDays" type="number" />
-              <Field label="顧客確認リード日数" name="clientConfirmLeadDays" type="number" />
-            </div>
-            <Field
-              label="適用開始日"
-              name="validFrom"
-              type="date"
-              defaultValue={new Date().toISOString().slice(0, 10)}
-            />
-            <button
-              type="submit"
-              className="mt-1 w-full rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
-            >
-              ルールを追加
-            </button>
-          </form>
+        <div className="flex flex-col gap-6">
+          <p className="text-xs text-neutral-500">
+            投稿種別ごとに月間本数・曜日・各期限（投稿の◯日前）を設定します。保存すると、現在月+2か月先までの制作タスクが自動生成されます。
+            すでに制作着手済み・Wチェック以降・手動で日付変更したタスクは変更されません。
+          </p>
+          {POST_TYPE_OPTIONS.map(([postType]) => {
+            const rule = detail.scheduleRules.find(
+              (r) => r.post_type === postType && r.is_active,
+            );
+            return (
+              <div key={postType} className="flex flex-col gap-2">
+                <ScheduleRuleForm clientId={id} postType={postType} rule={rule} />
+                {rule ? (
+                  <form action={deactivateScheduleRuleAction} className="self-end">
+                    <input type="hidden" name="clientId" value={id} />
+                    <input type="hidden" name="ruleId" value={rule.id} />
+                    <button type="submit" className="text-xs text-red-600 underline">
+                      このルールを無効化する
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </Section>
 
@@ -471,16 +426,158 @@ export default async function ClientEditPage({
           <label className="flex items-center gap-2 text-sm text-neutral-700">
             <input
               type="checkbox"
-              name="reminderEnabled"
-              defaultChecked={client.reminder_enabled}
+              name="materialReminderEnabled"
+              defaultChecked={client.material_reminder_enabled}
               className="h-4 w-4"
             />
-            素材待ち・顧客確認待ちの自動催促対象にする
+            素材待ちの自動催促対象にする（7日以上で注意、14日以上で催促対象）
           </label>
+          <label className="flex items-center gap-2 text-sm text-neutral-700">
+            <input
+              type="checkbox"
+              name="clientConfirmationReminderEnabled"
+              defaultChecked={client.client_confirmation_reminder_enabled}
+              className="h-4 w-4"
+            />
+            顧客確認待ちの自動催促対象にする（14日以上で催促対象）
+          </label>
+          <p className="text-xs text-neutral-400">
+            通知先は主担当・副担当および管理者権限のスタッフです。個別の通知先指定は現時点では未対応です。
+          </p>
           <SaveButton />
         </form>
       </Section>
     </main>
+  );
+}
+
+function ScheduleRuleForm({
+  clientId,
+  postType,
+  rule,
+}: {
+  clientId: string;
+  postType: PostType;
+  rule?: ScheduleRuleRow;
+}) {
+  const parsed = rule && isWeekdayRule(rule.weekday_rule) ? (rule.weekday_rule as WeekdayRule) : null;
+  const mode = parsed?.mode ?? "weekly";
+  const weeklySelected = new Set(mode === "weekly" && parsed && parsed.mode === "weekly" ? parsed.weekdays : []);
+  const nthRows = mode === "nth_weekday" && parsed && parsed.mode === "nth_weekday" ? parsed.rules : [];
+
+  return (
+    <form
+      action={saveScheduleRuleAction}
+      className="flex flex-col gap-3 rounded-md border border-neutral-200 p-4"
+    >
+      <input type="hidden" name="clientId" value={clientId} />
+      <input type="hidden" name="postType" value={postType} />
+      {rule ? <input type="hidden" name="ruleId" value={rule.id} /> : null}
+
+      <h3 className="text-sm font-semibold text-neutral-800">{POST_TYPE_LABELS[postType]}</h3>
+
+      <Field
+        label="月間本数"
+        name="monthlyTarget"
+        type="number"
+        defaultValue={String(rule?.monthly_target ?? 4)}
+      />
+
+      <fieldset className="flex flex-col gap-2 rounded-md border border-neutral-100 p-3">
+        <legend className="px-1 text-xs font-medium text-neutral-500">曜日ルール</legend>
+
+        <label className="flex items-center gap-2 text-sm text-neutral-700">
+          <input type="radio" name="weekdayMode" value="weekly" defaultChecked={mode === "weekly"} />
+          毎週
+        </label>
+        <div className="ml-6 flex flex-wrap gap-3">
+          {WEEKDAY_LABELS.map((label, weekday) => (
+            <label key={weekday} className="flex items-center gap-1 text-sm text-neutral-700">
+              <input
+                type="checkbox"
+                name="weeklyWeekday"
+                value={weekday}
+                defaultChecked={weeklySelected.has(weekday)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+
+        <label className="flex items-center gap-2 text-sm text-neutral-700">
+          <input
+            type="radio"
+            name="weekdayMode"
+            value="nth_weekday"
+            defaultChecked={mode === "nth_weekday"}
+          />
+          第◯曜日を指定（例: 第1・第3木曜日）
+        </label>
+        <div className="ml-6 flex flex-col gap-2">
+          {Array.from({ length: NTH_ROW_COUNT }).map((_, i) => {
+            const existing = nthRows[i];
+            return (
+              <div key={i} className="flex items-center gap-2 text-sm">
+                <select
+                  name={`nthRow${i}Nth`}
+                  defaultValue={existing ? String(existing.nth) : ""}
+                  className="rounded-md border border-neutral-300 px-2 py-1"
+                >
+                  <option value="">未使用</option>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      第{n}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  name={`nthRow${i}Weekday`}
+                  defaultValue={existing ? String(existing.weekday) : ""}
+                  className="rounded-md border border-neutral-300 px-2 py-1"
+                >
+                  <option value="">曜日</option>
+                  {WEEKDAY_LABELS.map((label, weekday) => (
+                    <option key={weekday} value={weekday}>
+                      {label}曜日
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <div className="grid grid-cols-3 gap-3">
+        <Field
+          label="制作開始: 投稿の◯日前"
+          name="productionLeadDays"
+          type="number"
+          defaultValue={rule?.production_lead_days?.toString() ?? ""}
+        />
+        <Field
+          label="Wチェック期限: 投稿の◯日前"
+          name="wcheckLeadDays"
+          type="number"
+          defaultValue={rule?.wcheck_lead_days?.toString() ?? ""}
+        />
+        <Field
+          label="顧客確認期限: 投稿の◯日前"
+          name="clientConfirmLeadDays"
+          type="number"
+          defaultValue={rule?.client_confirm_lead_days?.toString() ?? ""}
+        />
+      </div>
+
+      <Field
+        label="適用開始日"
+        name="validFrom"
+        type="date"
+        defaultValue={rule?.valid_from ?? new Date().toISOString().slice(0, 10)}
+      />
+
+      <SaveButton />
+    </form>
   );
 }
 

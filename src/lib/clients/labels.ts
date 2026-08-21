@@ -4,6 +4,7 @@ import type {
   ContractStatus,
   LinkType,
   PostType,
+  ProductionTaskStatus,
 } from "@/lib/supabase/database.types";
 
 export const CONTRACT_STATUS_LABELS: Record<ContractStatus, string> = {
@@ -65,3 +66,13 @@ export const POST_TYPE_OPTIONS = Object.entries(POST_TYPE_LABELS) as [
   PostType,
   string,
 ][];
+
+export const PRODUCTION_TASK_STATUS_LABELS: Record<ProductionTaskStatus, string> = {
+  material_waiting: "素材待ち",
+  production_waiting: "制作待ち",
+  in_production: "制作中",
+  wcheck_waiting: "Wチェック待ち",
+  client_confirmation_waiting: "顧客確認待ち",
+  posting_waiting: "投稿待ち",
+  completed: "完了",
+};

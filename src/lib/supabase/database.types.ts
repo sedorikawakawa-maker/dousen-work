@@ -31,6 +31,17 @@ export type LinkType =
 
 export type PostType = "reel" | "feed" | "story";
 
+export type TaskKind = "recurring" | "spot";
+
+export type ProductionTaskStatus =
+  | "material_waiting"
+  | "production_waiting"
+  | "in_production"
+  | "wcheck_waiting"
+  | "client_confirmation_waiting"
+  | "posting_waiting"
+  | "completed";
+
 export interface Database {
   public: {
     Tables: {
@@ -78,18 +89,25 @@ export interface Database {
           revenue_amount: number | null;
           fee_amount: number | null;
           material_wait_started_at: string | null;
-          reminder_enabled: boolean;
+          material_reminder_enabled: boolean;
+          client_confirmation_reminder_enabled: boolean;
           created_at: string;
           updated_at: string;
         };
         Insert: Omit<
           Database["public"]["Tables"]["clients"]["Row"],
-          "id" | "client_code" | "reminder_enabled" | "created_at" | "updated_at"
+          | "id"
+          | "client_code"
+          | "material_reminder_enabled"
+          | "client_confirmation_reminder_enabled"
+          | "created_at"
+          | "updated_at"
         > & {
           id?: string;
           // 空文字を渡すとDBトリガーが自動採番する（例: D00028）
           client_code?: string;
-          reminder_enabled?: boolean;
+          material_reminder_enabled?: boolean;
+          client_confirmation_reminder_enabled?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -241,6 +259,55 @@ export interface Database {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["activity_logs"]["Insert"]>;
+        Relationships: [];
+      };
+      production_tasks: {
+        Row: {
+          id: string;
+          client_id: string;
+          schedule_rule_id: string | null;
+          post_type: PostType;
+          task_kind: TaskKind;
+          source_month: string;
+          scheduled_post_date: string | null;
+          original_scheduled_post_date: string | null;
+          status: ProductionTaskStatus;
+          assignee_staff_id: string | null;
+          secondary_staff_id: string | null;
+          title: string;
+          production_start_date: string | null;
+          wcheck_due_date: string | null;
+          client_confirm_due_date: string | null;
+          is_carryover: boolean;
+          carried_from_task_id: string | null;
+          started_at: string | null;
+          completed_at: string | null;
+          work_minutes: number | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["production_tasks"]["Row"],
+          | "id"
+          | "started_at"
+          | "completed_at"
+          | "work_minutes"
+          | "notes"
+          | "created_at"
+          | "updated_at"
+        > & {
+          id?: string;
+          started_at?: string | null;
+          completed_at?: string | null;
+          work_minutes?: number | null;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["production_tasks"]["Insert"]
+        >;
         Relationships: [];
       };
     };
