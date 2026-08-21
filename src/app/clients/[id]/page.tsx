@@ -13,7 +13,8 @@ import {
 import { describeWeekdayRule, isWeekdayRule, type WeekdayRule } from "@/lib/scheduling/weekdayRule";
 import { ensureRollingTasksForClient, getMonthlySummary } from "@/lib/scheduling/generate";
 import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
-import { updateTaskScheduledDateAction } from "./actions";
+import { listMaterialsForClient } from "@/lib/materials/queries";
+import { addMaterialAction, updateTaskScheduledDateAction } from "./actions";
 
 const TABS = [
   { key: "overview", label: "概要" },
@@ -33,7 +34,6 @@ type TabKey = (typeof TABS)[number]["key"];
 
 const NOT_YET_IMPLEMENTED: Partial<Record<TabKey, string>> = {
   consumption: "Phase 4（担当者ダッシュボード）以降で実装予定です。",
-  materials: "Phase 5（素材）で実装予定です。",
   posts: "Phase 8（投稿実績）で実装予定です。",
   confirmations: "Phase 7（顧客確認）で実装予定です。",
 };
@@ -73,6 +73,11 @@ export default async function ClientDetailPage({
       getMonthlySummary(supabase, id),
       listUpcomingProductionTasks(supabase, id),
     ]);
+  }
+
+  let materials: Awaited<ReturnType<typeof listMaterialsForClient>> = [];
+  if (activeTab === "materials") {
+    materials = await listMaterialsForClient(supabase, id);
   }
 
   const materialWaitDays =
@@ -311,7 +316,18 @@ export default async function ClientDetailPage({
                             : "前月持越し"}
                         </span>
                       ) : null}
-                      {task.title} / {PRODUCTION_TASK_STATUS_LABELS[task.status]}
+                      <Link href={`/tasks/${task.id}`} className="hover:underline">
+                        {task.title}
+                      </Link>{" "}
+                      / {PRODUCTION_TASK_STATUS_LABELS[task.status]}
+                      {task.status === "material_waiting" ? (
+                        <span className="ml-2 rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
+                          素材待ち
+                          {getMaterialWaitElapsedDays(task.material_wait_started_at) !== null
+                            ? `${getMaterialWaitElapsedDays(task.material_wait_started_at)}日経過`
+                            : ""}
+                        </span>
+                      ) : null}
                       {task.assignee_staff_id ? (
                         <span className="ml-2 text-xs text-neutral-400">
                           担当: {staffNameById.get(task.assignee_staff_id) ?? "不明"}
@@ -345,6 +361,82 @@ export default async function ClientDetailPage({
                 ) : null}
               </ul>
             </div>
+          </div>
+        ) : null}
+
+        {activeTab === "materials" ? (
+          <div className="flex flex-col gap-6">
+            <div className="rounded-md bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+              顧客向け素材アップロードフォーム:{" "}
+              <span className="font-mono">{`/material-form/${id}`}</span>
+              （ログイン不要。このURLを顧客へ共有してください）
+            </div>
+
+            <ul className="flex flex-col gap-2 text-sm">
+              {materials.map((m) => (
+                <li key={m.id} className="rounded-md border border-neutral-200 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">{m.title}</span>
+                    <span className="flex items-center gap-2 text-xs text-neutral-400">
+                      <span className="rounded-full bg-neutral-100 px-2 py-0.5">
+                        {m.submitted_by_type === "client" ? "顧客提出" : "スタッフ登録"}
+                      </span>
+                      {new Date(m.received_at).toLocaleString("ja-JP")} 受領
+                    </span>
+                  </div>
+                  <dl className="mt-2 grid grid-cols-2 gap-2 text-xs text-neutral-600">
+                    <InfoRow label="撮影日" value={m.shot_date ?? "—"} />
+                    <InfoRow label="投稿用途" value={m.post_usage ?? "—"} />
+                    <InfoRow label="投稿希望時期" value={m.requested_post_timing ?? "—"} />
+                    <InfoRow
+                      label="Drive"
+                      value={m.drive_url ? "リンクあり" : "未登録"}
+                    />
+                  </dl>
+                  {m.editing_instructions ? (
+                    <p className="mt-1 text-xs text-neutral-600">編集指示: {m.editing_instructions}</p>
+                  ) : null}
+                  {m.caption_instructions ? (
+                    <p className="mt-1 text-xs text-neutral-600">
+                      キャプション: {m.caption_instructions}
+                    </p>
+                  ) : null}
+                  {m.contact_notes ? (
+                    <p className="mt-1 text-xs text-neutral-600">連絡事項: {m.contact_notes}</p>
+                  ) : null}
+                  {m.drive_url ? (
+                    <a
+                      href={m.drive_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block text-xs underline"
+                    >
+                      Driveで開く
+                    </a>
+                  ) : null}
+                </li>
+              ))}
+              {materials.length === 0 ? (
+                <li className="text-neutral-400">登録済みの素材はありません。</li>
+              ) : null}
+            </ul>
+
+            <form
+              action={addMaterialAction}
+              className="flex flex-col gap-3 border-t border-neutral-100 pt-4"
+            >
+              <input type="hidden" name="clientId" value={id} />
+              <h3 className="text-xs font-semibold text-neutral-500">
+                スタッフによる手動登録（LINE・メール等で受領した場合）
+              </h3>
+              <MaterialFields />
+              <button
+                type="submit"
+                className="mt-1 w-full rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+              >
+                登録する
+              </button>
+            </form>
           </div>
         ) : null}
 
@@ -414,6 +506,76 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs text-neutral-400">{label}</dt>
       <dd className="text-neutral-900">{value}</dd>
+    </div>
+  );
+}
+
+function MaterialFields() {
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="text-sm font-medium text-neutral-700">
+        内容（タイトル）
+        <input
+          name="title"
+          type="text"
+          required
+          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-sm font-medium text-neutral-700">
+          投稿用途
+          <input
+            name="postUsage"
+            type="text"
+            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+          />
+        </label>
+        <label className="text-sm font-medium text-neutral-700">
+          撮影日
+          <input
+            name="shotDate"
+            type="date"
+            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+          />
+        </label>
+      </div>
+      <label className="text-sm font-medium text-neutral-700">
+        投稿希望時期
+        <input
+          name="requestedPostTiming"
+          type="text"
+          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+        />
+      </label>
+      <label className="text-sm font-medium text-neutral-700">
+        編集指示
+        <textarea
+          name="editingInstructions"
+          rows={2}
+          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+        />
+      </label>
+      <label className="text-sm font-medium text-neutral-700">
+        キャプション指定
+        <textarea
+          name="captionInstructions"
+          rows={2}
+          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+        />
+      </label>
+      <label className="text-sm font-medium text-neutral-700">
+        連絡事項
+        <textarea
+          name="contactNotes"
+          rows={2}
+          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+        />
+      </label>
+      <label className="text-sm font-medium text-neutral-700">
+        ファイル（任意）
+        <input name="file" type="file" accept="image/*,video/*" className="mt-1 w-full text-sm" />
+      </label>
     </div>
   );
 }

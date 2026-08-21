@@ -10,6 +10,7 @@ import {
   removeUnstartedFutureTasksForRule,
 } from "@/lib/scheduling/generate";
 import type { WeekdayRule } from "@/lib/scheduling/weekdayRule";
+import { getDriveService } from "@/lib/drive/DriveService";
 import type {
   AssignmentType,
   ContractStatus,
@@ -379,4 +380,41 @@ export async function updateReminderSettingAction(formData: FormData) {
       error ? { error: error.message, section: "reminder" } : { saved: "reminder" },
     ),
   );
+}
+
+/** スタッフによる素材の手動登録（LINE・メール等、顧客向けフォーム以外で受領した場合）。 */
+export async function addMaterialAction(formData: FormData) {
+  const clientId = String(formData.get("clientId"));
+  const title = String(formData.get("title") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  if (!title) {
+    redirect(`/clients/${clientId}?tab=materials&error=${encodeURIComponent("内容（タイトル）を入力してください")}`);
+  }
+
+  let driveFileId: string | null = null;
+  let driveUrl: string | null = null;
+  const file = formData.get("file");
+  if (file instanceof File && file.size > 0) {
+    const drive = getDriveService();
+    const result = await drive.uploadFile({ file, clientId, folderHint: "materials" });
+    driveFileId = result.driveFileId;
+    driveUrl = result.driveUrl;
+  }
+
+  await supabase.from("materials").insert({
+    client_id: clientId,
+    title,
+    post_usage: emptyToNull(formData.get("postUsage")),
+    requested_post_timing: emptyToNull(formData.get("requestedPostTiming")),
+    editing_instructions: emptyToNull(formData.get("editingInstructions")),
+    caption_instructions: emptyToNull(formData.get("captionInstructions")),
+    contact_notes: emptyToNull(formData.get("contactNotes")),
+    shot_date: emptyToNull(formData.get("shotDate")),
+    drive_file_id: driveFileId,
+    drive_url: driveUrl,
+    submitted_by_type: "staff",
+  });
+
+  redirect(`/clients/${clientId}?tab=materials&saved=1`);
 }

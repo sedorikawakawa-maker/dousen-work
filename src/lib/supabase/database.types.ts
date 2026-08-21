@@ -33,6 +33,8 @@ export type PostType = "reel" | "feed" | "story";
 
 export type TaskKind = "recurring" | "spot";
 
+export type SubmittedByType = "client" | "staff";
+
 export type ProductionTaskStatus =
   | "material_waiting"
   | "production_waiting"
@@ -280,6 +282,9 @@ export interface Database {
           client_confirm_due_date: string | null;
           is_carryover: boolean;
           carried_from_task_id: string | null;
+          // タスク単位の素材待ち開始日時（1顧客に複数タスクが同時に素材待ちになり得るため、
+          // clients.material_wait_started_atとは別に保持する）
+          material_wait_started_at: string | null;
           started_at: string | null;
           completed_at: string | null;
           work_minutes: number | null;
@@ -290,6 +295,7 @@ export interface Database {
         Insert: Omit<
           Database["public"]["Tables"]["production_tasks"]["Row"],
           | "id"
+          | "material_wait_started_at"
           | "started_at"
           | "completed_at"
           | "work_minutes"
@@ -298,6 +304,7 @@ export interface Database {
           | "updated_at"
         > & {
           id?: string;
+          material_wait_started_at?: string | null;
           started_at?: string | null;
           completed_at?: string | null;
           work_minutes?: number | null;
@@ -334,6 +341,58 @@ export interface Database {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["post_records"]["Insert"]>;
+        Relationships: [];
+      };
+      materials: {
+        Row: {
+          id: string;
+          client_id: string;
+          title: string;
+          post_usage: string | null;
+          requested_post_timing: string | null;
+          editing_instructions: string | null;
+          caption_instructions: string | null;
+          contact_notes: string | null;
+          shot_date: string | null;
+          received_at: string;
+          drive_file_id: string | null;
+          drive_url: string | null;
+          submitted_by_type: SubmittedByType;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["materials"]["Row"],
+          "id" | "received_at" | "submitted_by_type" | "created_at"
+        > & {
+          id?: string;
+          received_at?: string;
+          submitted_by_type?: SubmittedByType;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["materials"]["Insert"]>;
+        Relationships: [];
+      };
+      notifications: {
+        Row: {
+          id: string;
+          recipient_staff_id: string;
+          notification_type: string;
+          title: string;
+          body: string | null;
+          entity_type: string | null;
+          entity_id: string | null;
+          is_read: boolean;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["notifications"]["Row"],
+          "id" | "is_read" | "created_at"
+        > & {
+          id?: string;
+          is_read?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["notifications"]["Insert"]>;
         Relationships: [];
       };
     };

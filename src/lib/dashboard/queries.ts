@@ -6,6 +6,7 @@ import type { AssignmentType, Database } from "@/lib/supabase/database.types";
 type TypedClient = SupabaseClient<Database>;
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
 type ClientViewRow = Database["public"]["Views"]["clients_view"]["Row"];
+type MaterialRow = Database["public"]["Tables"]["materials"]["Row"];
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -100,6 +101,7 @@ export interface DashboardData {
   wcheckWaitingTasks: ProductionTaskRow[];
   materialWaiting14Clients: DashboardClientRow[];
   unassignedTasks: ProductionTaskRow[];
+  newMaterials: MaterialRow[];
 }
 
 function relevantDueDates(task: ProductionTaskRow): string[] {
@@ -196,6 +198,17 @@ export async function getDashboardData(
     .order("scheduled_post_date", { ascending: true, nullsFirst: false })
     .limit(10);
 
+  let newMaterials: MaterialRow[] = [];
+  if (myClientIds.length > 0) {
+    const { data } = await supabase
+      .from("materials")
+      .select("*")
+      .in("client_id", myClientIds)
+      .order("received_at", { ascending: false })
+      .limit(5);
+    newMaterials = data ?? [];
+  }
+
   return {
     myClients,
     dueTodayTasks,
@@ -203,5 +216,6 @@ export async function getDashboardData(
     wcheckWaitingTasks: wcheckWaitingTasks ?? [],
     materialWaiting14Clients,
     unassignedTasks: unassignedTasks ?? [],
+    newMaterials,
   };
 }

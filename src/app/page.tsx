@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { getCurrentStaff } from "@/lib/auth/session";
-import { STAFF_ROLE_LABELS } from "@/lib/auth/roles";
+import { canViewFinance, STAFF_ROLE_LABELS } from "@/lib/auth/roles";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listClients } from "@/lib/clients/queries";
 import { getDashboardData } from "@/lib/dashboard/queries";
@@ -40,6 +40,9 @@ export default async function HomePage() {
     day: "numeric",
     weekday: "short",
   });
+
+  // 未割当タスクの全社警告は社長・役員・社員のみに表示する（パートには表示しない）
+  const canSeeUnassignedWarning = canViewFinance(staff.role);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 px-4 py-6 sm:py-8">
@@ -92,8 +95,22 @@ export default async function HomePage() {
           />
         </AlertSection>
 
-        <AlertSection title="新着素材" count={0} tone="neutral">
-          <p className="text-sm text-neutral-400">Phase 5（素材）実装後に表示されます。</p>
+        <AlertSection title="新着素材" count={dashboard.newMaterials.length} tone="neutral">
+          <ul className="flex flex-col gap-2 text-sm">
+            {dashboard.newMaterials.map((m) => (
+              <li key={m.id}>
+                <Link href={`/clients/${m.client_id}?tab=materials`} className="hover:underline">
+                  {clientNameById.get(m.client_id) ?? "不明な顧客"} / {m.title}
+                </Link>
+                <span className="ml-2 text-xs text-neutral-400">
+                  {new Date(m.received_at).toLocaleDateString("ja-JP")}
+                </span>
+              </li>
+            ))}
+            {dashboard.newMaterials.length === 0 ? (
+              <li className="text-neutral-400">新着素材はありません。</li>
+            ) : null}
+          </ul>
         </AlertSection>
 
         <AlertSection
@@ -130,17 +147,19 @@ export default async function HomePage() {
           />
         </AlertSection>
 
-        <AlertSection
-          title="未割当タスクの警告"
-          count={dashboard.unassignedTasks.length}
-          tone="warning"
-        >
-          <TaskList
-            tasks={dashboard.unassignedTasks}
-            clientNameById={clientNameById}
-            emptyText="未割当のタスクはありません。"
-          />
-        </AlertSection>
+        {canSeeUnassignedWarning ? (
+          <AlertSection
+            title="未割当タスクの警告"
+            count={dashboard.unassignedTasks.length}
+            tone="warning"
+          >
+            <TaskList
+              tasks={dashboard.unassignedTasks}
+              clientNameById={clientNameById}
+              emptyText="未割当のタスクはありません。"
+            />
+          </AlertSection>
+        ) : null}
       </div>
 
       <section className="rounded-lg border border-neutral-200 bg-white p-4">
@@ -236,7 +255,7 @@ function TaskList({
     <ul className="flex flex-col gap-2 text-sm">
       {tasks.map((task) => (
         <li key={task.id}>
-          <Link href={`/clients/${task.client_id}?tab=schedule`} className="hover:underline">
+          <Link href={`/tasks/${task.id}`} className="hover:underline">
             {clientNameById.get(task.client_id) ?? "不明な顧客"} / {task.title}
           </Link>
           <span className="ml-2 text-xs text-neutral-400">
