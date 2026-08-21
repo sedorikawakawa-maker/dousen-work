@@ -310,6 +310,32 @@ export interface Database {
         >;
         Relationships: [];
       };
+      post_records: {
+        Row: {
+          id: string;
+          production_task_id: string | null;
+          client_id: string;
+          post_type: PostType;
+          posted_at: string;
+          posted_by_staff_id: string;
+          title: string | null;
+          social_post_url: string | null;
+          canva_url: string | null;
+          final_drive_file_id: string | null;
+          final_drive_url: string | null;
+          source_material_id: string | null;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["post_records"]["Row"],
+          "id" | "created_at"
+        > & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["post_records"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       clients_view: {

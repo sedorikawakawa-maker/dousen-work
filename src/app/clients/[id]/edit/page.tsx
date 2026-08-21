@@ -286,8 +286,13 @@ export default async function ClientEditPage({
         <div className="flex flex-col gap-6">
           <p className="text-xs text-neutral-500">
             投稿種別ごとに月間本数・曜日・各期限（投稿の◯日前）を設定します。保存すると、現在月+2か月先までの制作タスクが自動生成されます。
-            すでに制作着手済み・Wチェック以降・手動で日付変更したタスクは変更されません。
+            すでに制作着手済み・Wチェック以降・素材待ち・手動で日付変更したタスクは変更されません。
           </p>
+          {!primaryAssignment ? (
+            <p className="rounded-md bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
+              ⚠ 主担当が未設定です。生成される制作タスクの担当者は「未割当」になります。
+            </p>
+          ) : null}
           {POST_TYPE_OPTIONS.map(([postType]) => {
             const rule = detail.scheduleRules.find(
               (r) => r.post_type === postType && r.is_active,

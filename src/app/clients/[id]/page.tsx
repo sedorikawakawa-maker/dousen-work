@@ -63,6 +63,7 @@ export default async function ClientDetailPage({
   const staffNameById = new Map(
     staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]),
   );
+  const todayIsoStr = new Date().toISOString().slice(0, 10);
 
   let monthlySummary: Awaited<ReturnType<typeof getMonthlySummary>> = [];
   let upcomingTasks: Awaited<ReturnType<typeof listUpcomingProductionTasks>> = [];
@@ -260,7 +261,20 @@ export default async function ClientDetailPage({
                               <td className="px-2 py-1">{month.label}</td>
                               <td className="px-2 py-1">{POST_TYPE_LABELS[postType]}</td>
                               <td className="px-2 py-1">{row.target}</td>
-                              <td className="px-2 py-1">{row.carryover}</td>
+                              <td className="px-2 py-1">
+                                {row.carryover > 0 ? (
+                                  <span>
+                                    {row.carryover}本
+                                    {row.carryoverNeedsReschedule > 0 ? (
+                                      <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                                        再日程設定が必要
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                ) : (
+                                  0
+                                )}
+                              </td>
                               <td className="px-2 py-1 font-medium">{row.required}</td>
                               <td className="px-2 py-1">{row.actual}</td>
                             </tr>
@@ -292,7 +306,9 @@ export default async function ClientDetailPage({
                     <span>
                       {task.is_carryover ? (
                         <span className="mr-2 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                          持越し
+                          {!task.scheduled_post_date || task.scheduled_post_date < todayIsoStr
+                            ? "前月持越し・再日程設定が必要"
+                            : "前月持越し"}
                         </span>
                       ) : null}
                       {task.title} / {PRODUCTION_TASK_STATUS_LABELS[task.status]}
@@ -300,7 +316,11 @@ export default async function ClientDetailPage({
                         <span className="ml-2 text-xs text-neutral-400">
                           担当: {staffNameById.get(task.assignee_staff_id) ?? "不明"}
                         </span>
-                      ) : null}
+                      ) : (
+                        <span className="ml-2 rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
+                          未割当
+                        </span>
+                      )}
                     </span>
                     <form action={updateTaskScheduledDateAction} className="flex items-center gap-2">
                       <input type="hidden" name="clientId" value={id} />

@@ -97,7 +97,9 @@ export async function generateTasksForRule(
         source_month: monthStart,
         scheduled_post_date: scheduledDate,
         original_scheduled_post_date: scheduledDate,
-        status: "material_waiting",
+        // 自動生成時の初期状態は「制作待ち」。「素材待ち」は担当者/社員/役員/社長が
+        // 素材が無いと判断した際に手動で設定する特別な状態であり、自動生成では使わない。
+        status: "production_waiting",
         assignee_staff_id: assigneeStaffId,
         secondary_staff_id: null,
         title: `${POST_TYPE_LABELS[rule.post_type]}（${scheduledDate}）`,
@@ -121,27 +123,41 @@ export async function generateTasksForRule(
 }
 
 /**
- * 未着手（material_waiting）かつ日付が未来で、1件だけの日付変更もされていない
- * タスクのみを対象に削除→再生成する。制作開始済み・Wチェック以降・
- * 手動で日付変更済みのタスクには一切触れない。
+ * 削除→再生成の対象となる「安全に触ってよいタスク」のID一覧を取得する。
+ * 条件: 未来の production_waiting（制作未着手）かつ、1件だけの日付変更もされていない。
+ * 「素材待ち(material_waiting)」は担当者が意図的に設定した特別な状態のため、
+ * ルール変更・無効化による自動削除・再生成の対象には含めない。
+ * 同様に制作開始済み・Wチェック以降のタスクにも一切触れない。
  */
-export async function regenerateTasksForRule(
+async function findSafelyRemovableTaskIds(
   supabase: TypedClient,
-  rule: ScheduleRule,
-): Promise<void> {
+  ruleId: string,
+): Promise<string[]> {
   const today = todayIso();
 
   const { data: candidates } = await supabase
     .from("production_tasks")
     .select("id, scheduled_post_date, original_scheduled_post_date")
-    .eq("schedule_rule_id", rule.id)
+    .eq("schedule_rule_id", ruleId)
     .eq("task_kind", "recurring")
-    .eq("status", "material_waiting")
+    .eq("status", "production_waiting")
     .gte("scheduled_post_date", today);
 
-  const removableIds = (candidates ?? [])
+  return (candidates ?? [])
     .filter((t) => t.scheduled_post_date === t.original_scheduled_post_date)
     .map((t) => t.id);
+}
+
+/**
+ * ルール変更時の安全な再生成。未来の production_waiting・未手動変更のタスクのみ
+ * 削除→再生成する。material_waiting・制作開始済み・Wチェック以降・手動日付変更済みの
+ * タスクには一切触れない。
+ */
+export async function regenerateTasksForRule(
+  supabase: TypedClient,
+  rule: ScheduleRule,
+): Promise<void> {
+  const removableIds = await findSafelyRemovableTaskIds(supabase, rule.id);
 
   if (removableIds.length > 0) {
     await supabase.from("production_tasks").delete().in("id", removableIds);
@@ -151,26 +167,14 @@ export async function regenerateTasksForRule(
 }
 
 /**
- * ルールを無効化する際、未着手・未来・未手動変更のタスクのみ削除する
- * （制作開始済み等は残す）。
+ * ルールを無効化する際、未来の production_waiting・未手動変更のタスクのみ削除する
+ * （material_waiting・制作開始済み等は残す）。
  */
 export async function removeUnstartedFutureTasksForRule(
   supabase: TypedClient,
   ruleId: string,
 ): Promise<void> {
-  const today = todayIso();
-
-  const { data: candidates } = await supabase
-    .from("production_tasks")
-    .select("id, scheduled_post_date, original_scheduled_post_date")
-    .eq("schedule_rule_id", ruleId)
-    .eq("task_kind", "recurring")
-    .eq("status", "material_waiting")
-    .gte("scheduled_post_date", today);
-
-  const removableIds = (candidates ?? [])
-    .filter((t) => t.scheduled_post_date === t.original_scheduled_post_date)
-    .map((t) => t.id);
+  const removableIds = await findSafelyRemovableTaskIds(supabase, ruleId);
 
   if (removableIds.length > 0) {
     await supabase.from("production_tasks").delete().in("id", removableIds);
@@ -222,7 +226,14 @@ export interface MonthlySummaryRow {
   label: string;
   byPostType: Record<
     Database["public"]["Tables"]["production_tasks"]["Row"]["post_type"],
-    { target: number; carryover: number; actual: number; required: number }
+    {
+      target: number;
+      carryover: number;
+      /** 持越しのうち、まだ新しい投稿予定日が設定されていない件数 */
+      carryoverNeedsReschedule: number;
+      actual: number;
+      required: number;
+    }
   >;
 }
 
@@ -245,57 +256,67 @@ export async function getMonthlySummary(
 
   const months = rollingWindowMonths();
   const rows: MonthlySummaryRow[] = [];
+  const today = todayIso();
 
   for (const { year, month0 } of months) {
     const monthStart = startOfMonthIso(year, month0);
 
-    const { data: actualTasks } = await supabase
+    // 実績の正本は post_records。production_tasks.status=completed は
+    // 業務フロー上の完了状態であり、月間の投稿本数集計には使わない。
+    const { data: monthTasks } = await supabase
       .from("production_tasks")
-      .select("post_type")
+      .select("id, post_type")
       .eq("client_id", clientId)
       .eq("task_kind", "recurring")
-      .eq("source_month", monthStart)
-      .eq("status", "completed");
+      .eq("source_month", monthStart);
+
+    const postTypeByTaskId = new Map((monthTasks ?? []).map((t) => [t.id, t.post_type]));
+    const taskIds = (monthTasks ?? []).map((t) => t.id);
+
+    const actualByPostType = EMPTY_POST_TYPE_COUNTS();
+    if (taskIds.length > 0) {
+      const { data: records } = await supabase
+        .from("post_records")
+        .select("production_task_id")
+        .in("production_task_id", taskIds);
+
+      for (const record of records ?? []) {
+        const postType = record.production_task_id
+          ? postTypeByTaskId.get(record.production_task_id)
+          : undefined;
+        if (postType) actualByPostType[postType] += 1;
+      }
+    }
 
     const { data: carryoverTasks } = await supabase
       .from("production_tasks")
-      .select("post_type")
+      .select("post_type, scheduled_post_date")
       .eq("client_id", clientId)
       .eq("task_kind", "recurring")
       .lt("source_month", monthStart)
       .neq("status", "completed");
 
-    const actualByPostType = EMPTY_POST_TYPE_COUNTS();
-    for (const t of actualTasks ?? []) actualByPostType[t.post_type] += 1;
-
     const carryoverByPostType = EMPTY_POST_TYPE_COUNTS();
-    for (const t of carryoverTasks ?? []) carryoverByPostType[t.post_type] += 1;
+    const carryoverNeedsRescheduleByPostType = EMPTY_POST_TYPE_COUNTS();
+    for (const t of carryoverTasks ?? []) {
+      carryoverByPostType[t.post_type] += 1;
+      if (!t.scheduled_post_date || t.scheduled_post_date < today) {
+        carryoverNeedsRescheduleByPostType[t.post_type] += 1;
+      }
+    }
 
-    rows.push({
-      year,
-      month0,
-      label: `${year}年${month0 + 1}月`,
-      byPostType: {
-        reel: {
-          target: targetByPostType.reel,
-          carryover: carryoverByPostType.reel,
-          actual: actualByPostType.reel,
-          required: targetByPostType.reel + carryoverByPostType.reel,
-        },
-        feed: {
-          target: targetByPostType.feed,
-          carryover: carryoverByPostType.feed,
-          actual: actualByPostType.feed,
-          required: targetByPostType.feed + carryoverByPostType.feed,
-        },
-        story: {
-          target: targetByPostType.story,
-          carryover: carryoverByPostType.story,
-          actual: actualByPostType.story,
-          required: targetByPostType.story + carryoverByPostType.story,
-        },
-      },
-    });
+    const byPostType = {} as MonthlySummaryRow["byPostType"];
+    for (const postType of ["reel", "feed", "story"] as const) {
+      byPostType[postType] = {
+        target: targetByPostType[postType],
+        carryover: carryoverByPostType[postType],
+        carryoverNeedsReschedule: carryoverNeedsRescheduleByPostType[postType],
+        actual: actualByPostType[postType],
+        required: targetByPostType[postType] + carryoverByPostType[postType],
+      };
+    }
+
+    rows.push({ year, month0, label: `${year}年${month0 + 1}月`, byPostType });
   }
 
   return rows;

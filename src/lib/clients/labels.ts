@@ -76,3 +76,14 @@ export const PRODUCTION_TASK_STATUS_LABELS: Record<ProductionTaskStatus, string>
   posting_waiting: "投稿待ち",
   completed: "完了",
 };
+
+export const NEXT_ACTION_BY_STATUS: Record<ClientCurrentStatus, string> = {
+  on_track: "特になし",
+  material_waiting: "素材の督促・確認",
+  in_production: "制作を進める",
+  wcheck_waiting: "Wチェック対応待ち",
+  client_confirmation_waiting: "顧客からの返信待ち",
+  posting_waiting: "投稿を実施する",
+  paused: "休止中",
+  other: "状況確認",
+};
