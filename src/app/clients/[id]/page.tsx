@@ -14,7 +14,15 @@ import { describeWeekdayRule, isWeekdayRule, type WeekdayRule } from "@/lib/sche
 import { ensureRollingTasksForClient, getMonthlySummary } from "@/lib/scheduling/generate";
 import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
 import { listMaterialsForClient } from "@/lib/materials/queries";
-import { addMaterialAction, updateTaskScheduledDateAction } from "./actions";
+import { buildMaterialFormUrl } from "@/lib/materials/formToken";
+import { DriveMockNotice } from "@/components/DriveMockNotice";
+import { CopyButton } from "@/components/CopyButton";
+import {
+  addMaterialAction,
+  issueMaterialFormTokenAction,
+  revokeMaterialFormTokenAction,
+  updateTaskScheduledDateAction,
+} from "./actions";
 
 const TABS = [
   { key: "overview", label: "概要" },
@@ -43,10 +51,10 @@ export default async function ClientDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; newToken?: string; saved?: string; error?: string }>;
 }) {
   const { id } = await params;
-  const { tab } = await searchParams;
+  const { tab, newToken, saved, error } = await searchParams;
   const activeTab: TabKey = TABS.some((t) => t.key === tab) ? (tab as TabKey) : "overview";
 
   const supabase = await createSupabaseServerClient();
@@ -76,8 +84,23 @@ export default async function ClientDetailPage({
   }
 
   let materials: Awaited<ReturnType<typeof listMaterialsForClient>> = [];
+  let hasActiveMaterialFormToken = false;
+  let newlyIssuedFormUrl: string | null = null;
   if (activeTab === "materials") {
-    materials = await listMaterialsForClient(supabase, id);
+    const [materialsResult, tokenResult] = await Promise.all([
+      listMaterialsForClient(supabase, id),
+      supabase
+        .from("material_form_tokens")
+        .select("id")
+        .eq("client_id", id)
+        .eq("is_active", true)
+        .maybeSingle(),
+    ]);
+    materials = materialsResult;
+    hasActiveMaterialFormToken = !!tokenResult.data;
+    if (newToken) {
+      newlyIssuedFormUrl = await buildMaterialFormUrl(newToken);
+    }
   }
 
   const materialWaitDays =
@@ -366,10 +389,60 @@ export default async function ClientDetailPage({
 
         {activeTab === "materials" ? (
           <div className="flex flex-col gap-6">
-            <div className="rounded-md bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
-              顧客向け素材アップロードフォーム:{" "}
-              <span className="font-mono">{`/material-form/${id}`}</span>
-              （ログイン不要。このURLを顧客へ共有してください）
+            {saved ? (
+              <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">
+                更新しました。
+              </p>
+            ) : null}
+            {error ? (
+              <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            ) : null}
+
+            <div className="rounded-md border border-neutral-200 p-3">
+              <h3 className="mb-2 text-xs font-semibold text-neutral-500">
+                顧客向け素材アップロードフォーム
+              </h3>
+
+              {newlyIssuedFormUrl ? (
+                <div className="mb-3 flex flex-col gap-2 rounded-md bg-yellow-50 px-3 py-2">
+                  <p className="text-xs text-yellow-800">
+                    発行しました。このURLは今だけ表示されます。必ずコピーして顧客へ共有してください。
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 truncate font-mono text-xs">{newlyIssuedFormUrl}</span>
+                    <CopyButton text={newlyIssuedFormUrl} />
+                  </div>
+                </div>
+              ) : (
+                <p className="mb-3 text-xs text-neutral-500">
+                  {hasActiveMaterialFormToken
+                    ? "発行済みです（URLは発行・再発行の直後のみ表示されます）。"
+                    : "未発行です。"}
+                </p>
+              )}
+
+              <div className="flex gap-2">
+                <form action={issueMaterialFormTokenAction}>
+                  <input type="hidden" name="clientId" value={id} />
+                  <button
+                    type="submit"
+                    className="rounded-md border border-neutral-300 px-3 py-1 text-xs text-neutral-700"
+                  >
+                    {hasActiveMaterialFormToken ? "URLを再発行" : "URLを発行"}
+                  </button>
+                </form>
+                {hasActiveMaterialFormToken ? (
+                  <form action={revokeMaterialFormTokenAction}>
+                    <input type="hidden" name="clientId" value={id} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-red-300 px-3 py-1 text-xs text-red-700"
+                    >
+                      無効化する
+                    </button>
+                  </form>
+                ) : null}
+              </div>
             </div>
 
             <ul className="flex flex-col gap-2 text-sm">
@@ -430,6 +503,7 @@ export default async function ClientDetailPage({
                 スタッフによる手動登録（LINE・メール等で受領した場合）
               </h3>
               <MaterialFields />
+              <DriveMockNotice />
               <button
                 type="submit"
                 className="mt-1 w-full rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"

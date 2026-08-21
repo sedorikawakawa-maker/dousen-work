@@ -11,6 +11,7 @@ import {
 } from "@/lib/scheduling/generate";
 import type { WeekdayRule } from "@/lib/scheduling/weekdayRule";
 import { getDriveService } from "@/lib/drive/DriveService";
+import { generateMaterialFormToken, hashMaterialFormToken } from "@/lib/materials/formToken";
 import type {
   AssignmentType,
   ContractStatus,
@@ -415,6 +416,50 @@ export async function addMaterialAction(formData: FormData) {
     drive_url: driveUrl,
     submitted_by_type: "staff",
   });
+
+  redirect(`/clients/${clientId}?tab=materials&saved=1`);
+}
+
+/**
+ * 素材フォームURLの発行・再発行。既存の有効トークンは無効化してから新規発行する。
+ * 生の値はDBに保存しない（hashのみ保存）ため、この直後のリダイレクト先でのみ表示できる。
+ */
+export async function issueMaterialFormTokenAction(formData: FormData) {
+  const clientId = String(formData.get("clientId"));
+  const staff = await getCurrentStaff();
+  const supabase = await createSupabaseServerClient();
+
+  const rawToken = generateMaterialFormToken();
+  const tokenHash = hashMaterialFormToken(rawToken);
+
+  await supabase
+    .from("material_form_tokens")
+    .update({ is_active: false, revoked_at: new Date().toISOString() })
+    .eq("client_id", clientId)
+    .eq("is_active", true);
+
+  const { error } = await supabase.from("material_form_tokens").insert({
+    client_id: clientId,
+    token_hash: tokenHash,
+    created_by_staff_id: staff?.id ?? null,
+  });
+
+  if (error) {
+    redirect(`/clients/${clientId}?tab=materials&error=${encodeURIComponent(error.message)}`);
+  }
+
+  redirect(`/clients/${clientId}?tab=materials&newToken=${encodeURIComponent(rawToken)}`);
+}
+
+export async function revokeMaterialFormTokenAction(formData: FormData) {
+  const clientId = String(formData.get("clientId"));
+  const supabase = await createSupabaseServerClient();
+
+  await supabase
+    .from("material_form_tokens")
+    .update({ is_active: false, revoked_at: new Date().toISOString() })
+    .eq("client_id", clientId)
+    .eq("is_active", true);
 
   redirect(`/clients/${clientId}?tab=materials&saved=1`);
 }

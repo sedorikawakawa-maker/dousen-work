@@ -1,22 +1,38 @@
 import { notFound } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { hashMaterialFormToken } from "@/lib/materials/formToken";
+import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { submitClientMaterialAction } from "./actions";
 
 export default async function MaterialFormPage({
   params,
   searchParams,
 }: {
-  params: Promise<{ clientId: string }>;
+  params: Promise<{ token: string }>;
   searchParams: Promise<{ submitted?: string; error?: string }>;
 }) {
-  const { clientId } = await params;
+  const { token } = await params;
   const { submitted, error } = await searchParams;
 
   const admin = createSupabaseAdminClient();
+  const tokenHash = hashMaterialFormToken(token);
+
+  const { data: tokenRow } = await admin
+    .from("material_form_tokens")
+    .select("client_id")
+    .eq("token_hash", tokenHash)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!tokenRow) {
+    notFound();
+  }
+
+  // 公開フォームからは顧客名のみ取得可能にする（他の詳細情報は一切返さない）
   const { data: client } = await admin
     .from("clients")
-    .select("id, company_name, shop_name")
-    .eq("id", clientId)
+    .select("company_name")
+    .eq("id", tokenRow.client_id)
     .maybeSingle();
 
   if (!client) {
@@ -27,10 +43,7 @@ export default async function MaterialFormPage({
     <main className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 py-8">
       <div>
         <h1 className="text-xl font-semibold text-neutral-900">素材アップロードフォーム</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          {client.company_name}
-          {client.shop_name ? `（${client.shop_name}）` : ""} 様
-        </p>
+        <p className="mt-1 text-sm text-neutral-500">{client.company_name} 様</p>
       </div>
 
       {submitted ? (
@@ -44,7 +57,7 @@ export default async function MaterialFormPage({
           ) : null}
 
           <form action={submitClientMaterialAction} className="flex flex-col gap-4">
-            <input type="hidden" name="clientId" value={clientId} />
+            <input type="hidden" name="token" value={token} />
 
             <Field label="素材の内容（タイトル）" name="title" required />
             <Field label="投稿用途（リール/フィード/ストーリーズなど）" name="postUsage" />
@@ -84,6 +97,7 @@ export default async function MaterialFormPage({
                 className="mt-1 w-full text-sm"
               />
             </label>
+            <DriveMockNotice />
 
             <button
               type="submit"

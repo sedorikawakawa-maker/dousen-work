@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AssignmentType, Database } from "@/lib/supabase/database.types";
+import { listPendingWChecksWithTasks, type PendingWCheckItem } from "@/lib/wchecks/queries";
 
 type TypedClient = SupabaseClient<Database>;
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
@@ -98,7 +99,8 @@ export interface DashboardData {
   myClients: DashboardClientRow[];
   dueTodayTasks: ProductionTaskRow[];
   priorityTasks: ProductionTaskRow[];
-  wcheckWaitingTasks: ProductionTaskRow[];
+  /** 自分が指定されたWチェックを優先表示するため、先頭側に並べ替え済み。 */
+  wcheckWaitingItems: PendingWCheckItem[];
   materialWaiting14Clients: DashboardClientRow[];
   unassignedTasks: ProductionTaskRow[];
   newMaterials: MaterialRow[];
@@ -175,12 +177,15 @@ export async function getDashboardData(
     .slice(0, 5)
     .map((x) => x.task);
 
-  const { data: wcheckWaitingTasks } = await supabase
-    .from("production_tasks")
-    .select("*")
-    .eq("status", "wcheck_waiting")
-    .order("wcheck_due_date", { ascending: true, nullsFirst: false })
-    .limit(20);
+  const pendingWChecks = await listPendingWChecksWithTasks(supabase);
+  const wcheckWaitingItems = [...pendingWChecks]
+    .sort((a, b) => {
+      const aMine = a.wcheck.reviewer_staff_id === staffId ? 0 : 1;
+      const bMine = b.wcheck.reviewer_staff_id === staffId ? 0 : 1;
+      if (aMine !== bMine) return aMine - bMine;
+      return a.wcheck.requested_at.localeCompare(b.wcheck.requested_at);
+    })
+    .slice(0, 20);
 
   const materialWaiting14Clients = myClients.filter((c) => {
     if (c.current_status !== "material_waiting" || !c.material_wait_started_at) return false;
@@ -213,7 +218,7 @@ export async function getDashboardData(
     myClients,
     dueTodayTasks,
     priorityTasks,
-    wcheckWaitingTasks: wcheckWaitingTasks ?? [],
+    wcheckWaitingItems,
     materialWaiting14Clients,
     unassignedTasks: unassignedTasks ?? [],
     newMaterials,

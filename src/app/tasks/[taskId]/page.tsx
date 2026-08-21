@@ -3,9 +3,22 @@ import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listActiveStaff } from "@/lib/clients/queries";
 import { listMaterialsForClient } from "@/lib/materials/queries";
+import { listWChecksForTask } from "@/lib/wchecks/queries";
 import { PRODUCTION_TASK_STATUS_LABELS, POST_TYPE_LABELS } from "@/lib/clients/labels";
+import {
+  WCHECK_ASSET_TYPE_LABELS,
+  WCHECK_CRITERIA,
+  WCHECK_STATUS_LABELS,
+  assetTypeForPostType,
+} from "@/lib/wchecks/labels";
 import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
-import { setTaskMaterialWaitingAction, resolveTaskMaterialWaitingAction } from "./actions";
+import {
+  approveWCheckAction,
+  registerWCheckAction,
+  requestWCheckRevisionAction,
+  resolveTaskMaterialWaitingAction,
+  setTaskMaterialWaitingAction,
+} from "./actions";
 
 export default async function TaskDetailPage({
   params,
@@ -28,13 +41,16 @@ export default async function TaskDetailPage({
     notFound();
   }
 
-  const [{ data: client }, staffOptions, materials] = await Promise.all([
+  const [{ data: client }, staffOptions, materials, wChecks] = await Promise.all([
     supabase.from("clients_view").select("id, company_name, shop_name").eq("id", task.client_id).maybeSingle(),
     listActiveStaff(supabase),
     listMaterialsForClient(supabase, task.client_id),
+    listWChecksForTask(supabase, taskId),
   ]);
 
   const staffNameById = new Map(staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]));
+  const pendingWCheck = wChecks.find((w) => w.status === "waiting");
+  const wCheckHistory = wChecks.filter((w) => w.id !== pendingWCheck?.id);
 
   const canSetMaterialWaiting =
     task.status === "production_waiting" || task.status === "in_production";
@@ -143,6 +159,145 @@ export default async function TaskDetailPage({
             現在の状態（{PRODUCTION_TASK_STATUS_LABELS[task.status]}）では変更できません。
           </p>
         )}
+      </section>
+
+      <section className="rounded-lg border border-neutral-200 bg-white p-6">
+        <h2 className="mb-3 text-sm font-semibold text-neutral-700">Wチェック</h2>
+
+        <div className="mb-4 rounded-md bg-purple-50 px-3 py-2 text-xs text-purple-800">
+          チェック基準: {WCHECK_CRITERIA.join(" / ")}
+        </div>
+
+        {pendingWCheck ? (
+          <div className="flex flex-col gap-3">
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              <InfoRow label="依頼日時" value={new Date(pendingWCheck.requested_at).toLocaleString("ja-JP")} />
+              <InfoRow
+                label="制作担当"
+                value={staffNameById.get(pendingWCheck.requested_by_staff_id) ?? "不明"}
+              />
+              <InfoRow
+                label="Wチェック担当"
+                value={
+                  pendingWCheck.reviewer_staff_id
+                    ? staffNameById.get(pendingWCheck.reviewer_staff_id) ?? "不明"
+                    : "指定なし（誰でも可）"
+                }
+              />
+              <InfoRow label={WCHECK_ASSET_TYPE_LABELS[pendingWCheck.asset_type]} value={pendingWCheck.asset_url} />
+            </dl>
+            {pendingWCheck.reviewer_staff_id ? (
+              <p className="w-fit rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-800">
+                指定担当: {staffNameById.get(pendingWCheck.reviewer_staff_id) ?? "不明"}
+              </p>
+            ) : null}
+            <a
+              href={pendingWCheck.asset_url}
+              target="_blank"
+              rel="noreferrer"
+              className="w-full rounded-md border border-neutral-300 px-4 py-3 text-center text-sm font-medium text-neutral-700"
+            >
+              制作物を開く
+            </a>
+            {pendingWCheck.notes ? (
+              <p className="text-xs text-neutral-500">補足: {pendingWCheck.notes}</p>
+            ) : null}
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <form action={approveWCheckAction}>
+                <input type="hidden" name="wcheckId" value={pendingWCheck.id} />
+                <input type="hidden" name="taskId" value={taskId} />
+                <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
+                <button
+                  type="submit"
+                  className="w-full rounded-md bg-green-600 px-4 py-3 text-sm font-medium text-white"
+                >
+                  OK
+                </button>
+              </form>
+              <details className="rounded-md border border-neutral-300">
+                <summary className="cursor-pointer px-4 py-3 text-center text-sm font-medium text-red-700">
+                  修正依頼
+                </summary>
+                <form action={requestWCheckRevisionAction} className="flex flex-col gap-2 p-3 pt-0">
+                  <input type="hidden" name="wcheckId" value={pendingWCheck.id} />
+                  <input type="hidden" name="taskId" value={taskId} />
+                  <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
+                  <textarea
+                    name="revisionComment"
+                    rows={2}
+                    required
+                    placeholder="修正コメント"
+                    className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    className="w-full rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    修正依頼を送る
+                  </button>
+                </form>
+              </details>
+            </div>
+          </div>
+        ) : (
+          <form action={registerWCheckAction} className="flex flex-col gap-3">
+            <input type="hidden" name="taskId" value={taskId} />
+            <label className="text-sm font-medium text-neutral-700">
+              {WCHECK_ASSET_TYPE_LABELS[assetTypeForPostType(task.post_type)]}
+              <input
+                name="assetUrl"
+                type="url"
+                required
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+              />
+            </label>
+            <label className="text-sm font-medium text-neutral-700">
+              Wチェック担当（任意）
+              <select
+                name="reviewerStaffId"
+                defaultValue=""
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+              >
+                <option value="">指定なし（誰でも可）</option>
+                {staffOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.last_name} {s.first_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm font-medium text-neutral-700">
+              補足
+              <textarea
+                name="notes"
+                rows={2}
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+              />
+            </label>
+            <button
+              type="submit"
+              className="mt-1 w-full rounded-md bg-neutral-900 px-4 py-3 text-sm font-medium text-white"
+            >
+              Wチェック登録
+            </button>
+          </form>
+        )}
+
+        {wCheckHistory.length > 0 ? (
+          <div className="mt-4 border-t border-neutral-100 pt-3">
+            <h3 className="mb-2 text-xs font-semibold text-neutral-500">Wチェック履歴</h3>
+            <ul className="flex flex-col gap-2 text-xs text-neutral-500">
+              {wCheckHistory.map((w) => (
+                <li key={w.id}>
+                  {new Date(w.requested_at).toLocaleString("ja-JP")} — {WCHECK_STATUS_LABELS[w.status]}
+                  {w.reviewed_at ? `（${new Date(w.reviewed_at).toLocaleString("ja-JP")}）` : ""}
+                  {w.revision_comment ? ` / ${w.revision_comment}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-neutral-200 bg-white p-6">

@@ -63,12 +63,18 @@ export default async function HomePage() {
         </form>
       </header>
 
-      <nav className="flex gap-3">
+      <nav className="flex flex-wrap gap-3">
         <Link
           href="/clients"
           className="rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
         >
           顧客一覧
+        </Link>
+        <Link
+          href="/wchecks"
+          className="rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+        >
+          Wチェック待ち
         </Link>
         <Link
           href="/clients/new"
@@ -87,12 +93,34 @@ export default async function HomePage() {
           />
         </AlertSection>
 
-        <AlertSection title="Wチェック待ち" count={dashboard.wcheckWaitingTasks.length} tone="wcheck">
-          <TaskList
-            tasks={dashboard.wcheckWaitingTasks}
-            clientNameById={clientNameById}
-            emptyText="Wチェック待ちのタスクはありません。"
-          />
+        <AlertSection title="Wチェック待ち" count={dashboard.wcheckWaitingItems.length} tone="wcheck">
+          <ul className="flex flex-col gap-2 text-sm">
+            {dashboard.wcheckWaitingItems.map(({ wcheck, task }) => {
+              const isMine = wcheck.reviewer_staff_id === staff.id;
+              return (
+                <li key={wcheck.id}>
+                  <Link href={`/tasks/${task.id}`} className="hover:underline">
+                    {clientNameById.get(task.client_id) ?? "不明な顧客"} / {task.title}
+                  </Link>
+                  {wcheck.reviewer_staff_id ? (
+                    <span
+                      className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
+                        isMine ? "bg-purple-600 text-white" : "bg-purple-100 text-purple-700"
+                      }`}
+                    >
+                      {isMine ? "あなた指定" : "指定担当あり"}
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
+            {dashboard.wcheckWaitingItems.length === 0 ? (
+              <li className="text-neutral-400">Wチェック待ちのタスクはありません。</li>
+            ) : null}
+          </ul>
+          <Link href="/wchecks" className="mt-3 inline-block text-xs underline">
+            Wチェック待ち一覧を開く →
+          </Link>
         </AlertSection>
 
         <AlertSection title="新着素材" count={dashboard.newMaterials.length} tone="neutral">

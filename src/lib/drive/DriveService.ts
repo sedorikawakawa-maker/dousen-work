@@ -19,6 +19,8 @@ export interface DriveUploadResult {
 }
 
 export interface DriveService {
+  /** モック実装かどうか。UI側で開発環境の注意書き表示判定に使う。 */
+  readonly isMock: boolean;
   uploadFile(input: DriveUploadInput): Promise<DriveUploadResult>;
 }
 
@@ -30,6 +32,8 @@ export interface DriveService {
  * 差し替えが必要。
  */
 class MockDriveService implements DriveService {
+  readonly isMock = true;
+
   async uploadFile({ file, clientId, folderHint }: DriveUploadInput): Promise<DriveUploadResult> {
     const id = `mock-${crypto.randomUUID()}`;
     const folder = folderHint ? `${folderHint}/` : "";

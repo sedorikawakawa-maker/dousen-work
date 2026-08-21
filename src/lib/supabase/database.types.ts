@@ -35,6 +35,10 @@ export type TaskKind = "recurring" | "spot";
 
 export type SubmittedByType = "client" | "staff";
 
+export type WCheckAssetType = "drive_video" | "canva";
+
+export type WCheckStatus = "waiting" | "approved" | "revision_requested";
+
 export type ProductionTaskStatus =
   | "material_waiting"
   | "production_waiting"
@@ -393,6 +397,61 @@ export interface Database {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["notifications"]["Insert"]>;
+        Relationships: [];
+      };
+      material_form_tokens: {
+        Row: {
+          id: string;
+          client_id: string;
+          token_hash: string;
+          is_active: boolean;
+          created_by_staff_id: string | null;
+          created_at: string;
+          revoked_at: string | null;
+          expires_at: string | null;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["material_form_tokens"]["Row"],
+          "id" | "is_active" | "created_at" | "revoked_at" | "expires_at"
+        > & {
+          id?: string;
+          is_active?: boolean;
+          created_at?: string;
+          revoked_at?: string | null;
+          expires_at?: string | null;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["material_form_tokens"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      w_checks: {
+        Row: {
+          id: string;
+          production_task_id: string;
+          requested_by_staff_id: string;
+          reviewer_staff_id: string | null;
+          asset_type: WCheckAssetType;
+          asset_url: string;
+          status: WCheckStatus;
+          notes: string | null;
+          revision_comment: string | null;
+          requested_at: string;
+          reviewed_at: string | null;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["w_checks"]["Row"],
+          "id" | "status" | "revision_comment" | "requested_at" | "reviewed_at" | "created_at"
+        > & {
+          id?: string;
+          status?: WCheckStatus;
+          revision_comment?: string | null;
+          requested_at?: string;
+          reviewed_at?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["w_checks"]["Insert"]>;
         Relationships: [];
       };
     };
