@@ -51,6 +51,10 @@ export type OutsourcingStatus =
   | "completed"
   | "cancelled";
 
+export type InternalTaskPriority = "A" | "B" | "C";
+
+export type InternalTaskStatus = "not_started" | "in_progress" | "done";
+
 export type ProductionTaskStatus =
   | "material_waiting"
   | "production_waiting"
@@ -571,6 +575,34 @@ export interface Database {
         Update: Partial<
           Database["public"]["Tables"]["outsourcing_deliveries"]["Insert"]
         >;
+        Relationships: [];
+      };
+      internal_tasks: {
+        Row: {
+          id: string;
+          client_id: string | null;
+          assignee_staff_id: string;
+          category: string;
+          title: string;
+          description: string | null;
+          priority: InternalTaskPriority;
+          status: InternalTaskStatus;
+          due_at: string | null;
+          attachment_url: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["internal_tasks"]["Row"],
+          "id" | "priority" | "status" | "created_at" | "updated_at"
+        > & {
+          id?: string;
+          priority?: InternalTaskPriority;
+          status?: InternalTaskStatus;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["internal_tasks"]["Insert"]>;
         Relationships: [];
       };
     };

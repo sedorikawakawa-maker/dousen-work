@@ -60,6 +60,9 @@ export function SiteHeader({
           <Link href="/outsourcing" className={NAV_LINK_CLASS}>
             外注管理
           </Link>
+          <Link href="/internal-tasks" className={NAV_LINK_CLASS}>
+            社内タスク
+          </Link>
           {showManagement ? (
             <>
               <Link href="/management" className={NAV_LINK_CLASS}>

@@ -28,6 +28,7 @@ export default async function ManagementDashboardPage() {
     { label: "外注進行中", value: overview.kpis.outsourcingInProgress, tone: "neutral" },
     { label: "外注納期超過", value: overview.kpis.outsourcingOverdue, tone: "urgent" },
     { label: "外注納品済み未確認", value: overview.kpis.outsourcingDeliveredUnconfirmed, tone: "warning" },
+    { label: "社内タスク期限超過", value: overview.kpis.overdueInternalTasks, tone: "urgent" },
   ];
 
   const toneClass = {

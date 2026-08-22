@@ -13,6 +13,8 @@ import {
 } from "@/lib/clients/labels";
 import { getMaterialWaitElapsedDays } from "@/lib/reminders/material";
 import { getClientConfirmationElapsedDays } from "@/lib/reminders/clientConfirmation";
+import { listTodayInternalTasksForStaff } from "@/lib/internalTasks/queries";
+import { INTERNAL_TASK_PRIORITY_LABELS } from "@/lib/internalTasks/labels";
 import type { Database } from "@/lib/supabase/database.types";
 import { logoutAction } from "./logout-action";
 import { StatusSelect } from "./StatusSelect";
@@ -27,9 +29,10 @@ export default async function HomePage() {
   }
 
   const supabase = await createSupabaseServerClient();
-  const [dashboard, allClients] = await Promise.all([
+  const [dashboard, allClients, todayInternalTasks] = await Promise.all([
     getDashboardData(supabase, staff.id),
     listClients(supabase),
+    listTodayInternalTasksForStaff(supabase, staff.id),
   ]);
 
   const clientNameById = new Map(
@@ -204,6 +207,33 @@ export default async function HomePage() {
           </AlertSection>
         ) : null}
       </div>
+
+      <section className="rounded-lg border border-neutral-200 bg-white p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-neutral-700">今日の社内タスク</h2>
+          <Link href="/internal-tasks" className="text-xs underline">
+            社内タスク一覧を開く →
+          </Link>
+        </div>
+        <ul className="flex flex-col gap-2 text-sm">
+          {todayInternalTasks.map((task) => (
+            <li key={task.id}>
+              <Link href={`/internal-tasks/${task.id}/edit`} className="hover:underline">
+                {task.title}
+              </Link>
+              <span className="ml-2 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                {task.category}
+              </span>
+              <span className="ml-2 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                {INTERNAL_TASK_PRIORITY_LABELS[task.priority]}
+              </span>
+            </li>
+          ))}
+          {todayInternalTasks.length === 0 ? (
+            <li className="text-neutral-400">今日締切・期限超過の社内タスクはありません。</li>
+          ) : null}
+        </ul>
+      </section>
 
       <section className="rounded-lg border border-neutral-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-neutral-700">担当顧客一覧（顧客登録順）</h2>

@@ -11,6 +11,7 @@ import {
 import { getMaterialWaitElapsedDays } from "@/lib/reminders/material";
 import { getClientConfirmationElapsedDays } from "@/lib/reminders/clientConfirmation";
 import { getOutsourcingKpis, listOutsourcingRequests } from "@/lib/outsourcing/queries";
+import { listOverdueInternalTasks } from "@/lib/internalTasks/queries";
 
 type TypedClient = SupabaseClient<Database>;
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
@@ -68,6 +69,7 @@ export interface ManagementOverview {
     outsourcingInProgress: number;
     outsourcingOverdue: number;
     outsourcingDeliveredUnconfirmed: number;
+    overdueInternalTasks: number;
   };
   interventions: InterventionItem[];
   pastMonthShortfalls: PastMonthShortfall[];
@@ -87,6 +89,7 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
     { data: pastTasks },
     outsourcingKpis,
     outsourcingRequests,
+    overdueInternalTasks,
   ] = await Promise.all([
     supabase
       .from("clients_view")
@@ -107,6 +110,7 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
       .lt("source_month", currentMonthStart),
     getOutsourcingKpis(supabase),
     listOutsourcingRequests(supabase),
+    listOverdueInternalTasks(supabase),
   ]);
 
   const staffNameById = new Map(staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]));
@@ -256,6 +260,20 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
     }
   }
 
+  // 期限超過の社内タスクも要介入一覧に加える
+  for (const t of overdueInternalTasks) {
+    interventions.push({
+      key: `internal-task-${t.id}`,
+      clientId: t.client_id ?? "",
+      clientName: t.client_id ? clientNameById.get(t.client_id) ?? "不明な顧客" : "社内タスク",
+      primaryStaffName: staffNameById.get(t.assignee_staff_id) ?? null,
+      issueType: "社内タスク期限超過",
+      elapsedDays: null,
+      nextAction: "社内タスクを進める",
+      href: `/internal-tasks/${t.id}/edit`,
+    });
+  }
+
   return {
     kpis: {
       materialWaiting14,
@@ -267,6 +285,7 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
       outsourcingInProgress: outsourcingKpis.inProgressCount,
       outsourcingOverdue: outsourcingKpis.overdueCount,
       outsourcingDeliveredUnconfirmed: outsourcingKpis.deliveredUnconfirmedCount,
+      overdueInternalTasks: overdueInternalTasks.length,
     },
     interventions,
     pastMonthShortfalls,
