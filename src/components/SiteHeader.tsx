@@ -57,6 +57,9 @@ export function SiteHeader({
           <Link href="/reminders" className={NAV_LINK_CLASS}>
             催促
           </Link>
+          <Link href="/outsourcing" className={NAV_LINK_CLASS}>
+            外注管理
+          </Link>
           {showManagement ? (
             <>
               <Link href="/management" className={NAV_LINK_CLASS}>

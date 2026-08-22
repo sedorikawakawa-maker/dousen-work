@@ -43,6 +43,14 @@ export type ClientConfirmationStatus = "waiting" | "approved" | "revision_reques
 
 export type ReminderType = "material" | "client_confirmation";
 
+export type OutsourcingStatus =
+  | "draft"
+  | "requested"
+  | "in_progress"
+  | "delivered"
+  | "completed"
+  | "cancelled";
+
 export type ProductionTaskStatus =
   | "material_waiting"
   | "production_waiting"
@@ -511,6 +519,60 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["reminder_logs"]["Insert"]>;
         Relationships: [];
       };
+      outsourcing_requests: {
+        Row: {
+          id: string;
+          client_id: string | null;
+          production_task_id: string | null;
+          title: string;
+          contractor_name: string;
+          instruction: string | null;
+          material_link: string | null;
+          requested_at: string;
+          due_date: string | null;
+          upload_token_hash: string;
+          token_expires_at: string | null;
+          status: OutsourcingStatus;
+          created_by_staff_id: string;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["outsourcing_requests"]["Row"],
+          "id" | "requested_at" | "status" | "created_at"
+        > & {
+          id?: string;
+          requested_at?: string;
+          status?: OutsourcingStatus;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["outsourcing_requests"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      outsourcing_deliveries: {
+        Row: {
+          id: string;
+          outsourcing_request_id: string;
+          drive_file_id: string | null;
+          drive_url: string | null;
+          contractor_note: string | null;
+          delivered_at: string;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["outsourcing_deliveries"]["Row"],
+          "id" | "delivered_at" | "created_at"
+        > & {
+          id?: string;
+          delivered_at?: string;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["outsourcing_deliveries"]["Insert"]
+        >;
+        Relationships: [];
+      };
     };
     Views: {
       clients_view: {
@@ -548,6 +610,15 @@ export interface Database {
           p_reason: string;
         };
         Returns: undefined;
+      };
+      create_outsourcing_delivery: {
+        Args: {
+          p_outsourcing_request_id: string;
+          p_drive_file_id: string | null;
+          p_drive_url: string | null;
+          p_contractor_note: string | null;
+        };
+        Returns: string;
       };
     };
     Enums: Record<string, never>;

@@ -10,6 +10,7 @@ import {
 } from "@/lib/clientConfirmations/queries";
 import { getMaterialWaitElapsedDays } from "@/lib/reminders/material";
 import { getClientConfirmationElapsedDays } from "@/lib/reminders/clientConfirmation";
+import { getOutsourcingKpis, listOutsourcingRequests } from "@/lib/outsourcing/queries";
 
 type TypedClient = SupabaseClient<Database>;
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
@@ -64,6 +65,9 @@ export interface ManagementOverview {
     dueOrOverdueTasks: number;
     unassignedTasks: number;
     pastMonthShortfallGroups: number;
+    outsourcingInProgress: number;
+    outsourcingOverdue: number;
+    outsourcingDeliveredUnconfirmed: number;
   };
   interventions: InterventionItem[];
   pastMonthShortfalls: PastMonthShortfall[];
@@ -81,6 +85,8 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
     confirmationItems,
     { data: incompleteTasks },
     { data: pastTasks },
+    outsourcingKpis,
+    outsourcingRequests,
   ] = await Promise.all([
     supabase
       .from("clients_view")
@@ -99,6 +105,8 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
       .select("client_id, post_type, source_month, status, scheduled_post_date")
       .eq("task_kind", "recurring")
       .lt("source_month", currentMonthStart),
+    getOutsourcingKpis(supabase),
+    listOutsourcingRequests(supabase),
   ]);
 
   const staffNameById = new Map(staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]));
@@ -219,6 +227,35 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
       needsReschedule: g.needsReschedule,
     }));
 
+  // 外注: 納期超過・納品済み未確認を要介入一覧に追加する
+  const activeOutsourcingStatuses = new Set(["requested", "in_progress"]);
+  for (const r of outsourcingRequests) {
+    if (activeOutsourcingStatuses.has(r.status) && r.due_date && r.due_date < today) {
+      interventions.push({
+        key: `outsourcing-overdue-${r.id}`,
+        clientId: r.client_id ?? "",
+        clientName: r.client_id ? clientNameById.get(r.client_id) ?? "不明な顧客" : "顧客未設定",
+        primaryStaffName: staffNameById.get(r.created_by_staff_id) ?? null,
+        issueType: "外注納期超過",
+        elapsedDays: null,
+        nextAction: "外注先へ確認・督促",
+        href: `/outsourcing/${r.id}`,
+      });
+    }
+    if (r.status === "delivered") {
+      interventions.push({
+        key: `outsourcing-unconfirmed-${r.id}`,
+        clientId: r.client_id ?? "",
+        clientName: r.client_id ? clientNameById.get(r.client_id) ?? "不明な顧客" : "顧客未設定",
+        primaryStaffName: staffNameById.get(r.created_by_staff_id) ?? null,
+        issueType: "外注納品確認待ち",
+        elapsedDays: null,
+        nextAction: "納品内容を確認する",
+        href: `/outsourcing/${r.id}`,
+      });
+    }
+  }
+
   return {
     kpis: {
       materialWaiting14,
@@ -227,6 +264,9 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
       dueOrOverdueTasks: dueOrOverdueTasks.length,
       unassignedTasks: unassignedTasks.length,
       pastMonthShortfallGroups: pastMonthShortfalls.length,
+      outsourcingInProgress: outsourcingKpis.inProgressCount,
+      outsourcingOverdue: outsourcingKpis.overdueCount,
+      outsourcingDeliveredUnconfirmed: outsourcingKpis.deliveredUnconfirmedCount,
     },
     interventions,
     pastMonthShortfalls,

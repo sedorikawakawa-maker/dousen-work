@@ -2,8 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase/env";
 
-// 顧客向け素材フォームはログイン不要（顧客はDOUSEN WORKへログインしない想定）
-const PUBLIC_PATHS = ["/login", "/material-form"];
+// 顧客向け素材フォーム・外注アップロードフォームはログイン不要
+// （顧客・外注先はDOUSEN WORKへログインしない想定）
+const PUBLIC_PATHS = ["/login", "/material-form", "/outsourcing-upload"];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });

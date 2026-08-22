@@ -25,7 +25,9 @@ export default async function ManagementDashboardPage() {
     { label: "今日/期限超過タスク", value: overview.kpis.dueOrOverdueTasks, tone: "warning" },
     { label: "未割当タスク", value: overview.kpis.unassignedTasks, tone: "urgent" },
     { label: "前月未達・持越し", value: overview.kpis.pastMonthShortfallGroups, tone: "warning" },
-    { label: "外注進行中", value: "Phase 10で実装予定", tone: "neutral" },
+    { label: "外注進行中", value: overview.kpis.outsourcingInProgress, tone: "neutral" },
+    { label: "外注納期超過", value: overview.kpis.outsourcingOverdue, tone: "urgent" },
+    { label: "外注納品済み未確認", value: overview.kpis.outsourcingDeliveredUnconfirmed, tone: "warning" },
   ];
 
   const toneClass = {

@@ -3,15 +3,15 @@ import "server-only";
 import { randomBytes, createHash } from "node:crypto";
 import { getRequestOrigin } from "@/lib/http/origin";
 
-export function generateMaterialFormToken(): string {
+export function generateOutsourcingToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-export function hashMaterialFormToken(token: string): string {
+export function hashOutsourcingToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export async function buildMaterialFormUrl(token: string): Promise<string> {
+export async function buildOutsourcingUploadUrl(token: string): Promise<string> {
   const origin = await getRequestOrigin();
-  return `${origin}/material-form/${token}`;
+  return `${origin}/outsourcing-upload/${token}`;
 }

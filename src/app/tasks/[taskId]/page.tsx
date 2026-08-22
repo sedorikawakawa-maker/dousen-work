@@ -34,10 +34,10 @@ export default async function TaskDetailPage({
   searchParams,
 }: {
   params: Promise<{ taskId: string }>;
-  searchParams: Promise<{ saved?: string; error?: string }>;
+  searchParams: Promise<{ saved?: string; error?: string; assetUrl?: string }>;
 }) {
   const { taskId } = await params;
-  const { saved, error } = await searchParams;
+  const { saved, error, assetUrl } = await searchParams;
 
   const supabase = await createSupabaseServerClient();
   const { data: task } = await supabase
@@ -289,8 +289,14 @@ export default async function TaskDetailPage({
                 name="assetUrl"
                 type="url"
                 required
+                defaultValue={assetUrl ?? ""}
                 className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
               />
+              {assetUrl ? (
+                <span className="mt-1 block text-xs text-neutral-400">
+                  外注納品物のリンクを入力済みです。必要に応じて変更してください。
+                </span>
+              ) : null}
             </label>
             <label className="text-sm font-medium text-neutral-700">
               Wチェック担当（任意）
