@@ -5,6 +5,9 @@
 -- clients: reminder_enabled を素材待ち / 顧客確認待ちで分離
 -- ---------------------------------------------------------------------------
 
+-- clients_viewがreminder_enabled列に依存しているため、列を落とす前にviewを先に削除する。
+drop view if exists public.clients_view;
+
 alter table public.clients
   add column if not exists material_reminder_enabled boolean not null default true;
 alter table public.clients
@@ -12,7 +15,9 @@ alter table public.clients
 alter table public.clients
   drop column if exists reminder_enabled;
 
-create or replace view public.clients_view as
+-- reminder_enabledを削除しmaterial_reminder_enabled/client_confirmation_reminder_enabled
+-- へ置き換えるため、CREATE OR REPLACE VIEWの列順序制約を避けてdrop+createで作り直す。
+create view public.clients_view as
 select
   c.id,
   c.client_code,
@@ -38,6 +43,8 @@ select
   c.updated_at
 from public.clients c
 where public.is_active_staff();
+
+grant select on public.clients_view to authenticated;
 
 -- clients: 催促設定の変更を記録
 create or replace function public.log_clients_reminder_setting_change()

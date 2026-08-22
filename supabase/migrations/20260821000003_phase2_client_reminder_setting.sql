@@ -6,7 +6,11 @@
 alter table public.clients
   add column if not exists reminder_enabled boolean not null default true;
 
-create or replace view public.clients_view as
+-- 列の追加はview末尾への追記しかできない(CREATE OR REPLACE VIEWの制約)ため、
+-- 既存列の途中にreminder_enabledを挟み込めるようdrop+createで作り直す。
+drop view if exists public.clients_view;
+
+create view public.clients_view as
 select
   c.id,
   c.client_code,
@@ -31,3 +35,5 @@ select
   c.updated_at
 from public.clients c
 where public.is_active_staff();
+
+grant select on public.clients_view to authenticated;
