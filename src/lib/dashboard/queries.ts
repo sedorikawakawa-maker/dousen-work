@@ -76,7 +76,8 @@ export async function getCurrentMonthClientProgress(
     const { data: records } = await supabase
       .from("post_records")
       .select("production_task_id")
-      .in("production_task_id", taskIds);
+      .in("production_task_id", taskIds)
+      .is("cancelled_at", null);
     for (const record of records ?? []) {
       const clientId = record.production_task_id
         ? clientIdByTaskId.get(record.production_task_id)

@@ -1,11 +1,14 @@
 import "server-only";
 
+import { cache } from "react";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type CurrentStaff = Database["public"]["Tables"]["staff"]["Row"];
 
-export async function getCurrentStaff(): Promise<CurrentStaff | null> {
+// レイアウトと各ページの両方から呼ばれるため、リクエスト単位でメモ化して
+// Supabaseへの重複問い合わせを避ける。
+export const getCurrentStaff = cache(async (): Promise<CurrentStaff | null> => {
   const supabase = await createSupabaseServerClient();
 
   const {
@@ -24,4 +27,4 @@ export async function getCurrentStaff(): Promise<CurrentStaff | null> {
     .maybeSingle();
 
   return staff ?? null;
-}
+});

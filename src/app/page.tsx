@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { getCurrentStaff } from "@/lib/auth/session";
-import { canViewFinance, STAFF_ROLE_LABELS } from "@/lib/auth/roles";
+import { canAccessManagementFeatures, STAFF_ROLE_LABELS } from "@/lib/auth/roles";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listClients } from "@/lib/clients/queries";
 import { getDashboardData } from "@/lib/dashboard/queries";
@@ -43,7 +43,7 @@ export default async function HomePage() {
   });
 
   // 未割当タスクの全社警告は社長・役員・社員のみに表示する（パートには表示しない）
-  const canSeeUnassignedWarning = canViewFinance(staff.role);
+  const canSeeUnassignedWarning = canAccessManagementFeatures(staff.role);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 px-4 py-6 sm:py-8">
@@ -63,39 +63,6 @@ export default async function HomePage() {
           </button>
         </form>
       </header>
-
-      <nav className="flex flex-wrap gap-3">
-        <Link
-          href="/clients"
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
-        >
-          顧客一覧
-        </Link>
-        <Link
-          href="/wchecks"
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
-        >
-          Wチェック待ち
-        </Link>
-        <Link
-          href="/client-confirmations"
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
-        >
-          顧客確認待ち
-        </Link>
-        <Link
-          href="/post-records"
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
-        >
-          投稿履歴
-        </Link>
-        <Link
-          href="/clients/new"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
-        >
-          ＋ 顧客登録
-        </Link>
-      </nav>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <AlertSection title="今日締切" count={dashboard.dueTodayTasks.length} tone="urgent">

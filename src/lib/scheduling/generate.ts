@@ -278,7 +278,8 @@ export async function getMonthlySummary(
       const { data: records } = await supabase
         .from("post_records")
         .select("production_task_id")
-        .in("production_task_id", taskIds);
+        .in("production_task_id", taskIds)
+        .is("cancelled_at", null);
 
       for (const record of records ?? []) {
         const postType = record.production_task_id

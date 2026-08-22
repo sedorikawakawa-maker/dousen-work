@@ -41,6 +41,8 @@ export type WCheckStatus = "waiting" | "approved" | "revision_requested";
 
 export type ClientConfirmationStatus = "waiting" | "approved" | "revision_requested";
 
+export type ReminderType = "material" | "client_confirmation";
+
 export type ProductionTaskStatus =
   | "material_waiting"
   | "production_waiting"
@@ -338,13 +340,19 @@ export interface Database {
           final_drive_url: string | null;
           source_material_id: string | null;
           created_at: string;
+          cancelled_at: string | null;
+          cancelled_by_staff_id: string | null;
+          cancel_reason: string | null;
         };
         Insert: Omit<
           Database["public"]["Tables"]["post_records"]["Row"],
-          "id" | "created_at"
+          "id" | "created_at" | "cancelled_at" | "cancelled_by_staff_id" | "cancel_reason"
         > & {
           id?: string;
           created_at?: string;
+          cancelled_at?: string | null;
+          cancelled_by_staff_id?: string | null;
+          cancel_reason?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["post_records"]["Insert"]>;
         Relationships: [];
@@ -483,6 +491,26 @@ export interface Database {
         >;
         Relationships: [];
       };
+      reminder_logs: {
+        Row: {
+          id: string;
+          client_id: string;
+          production_task_id: string | null;
+          reminder_type: ReminderType;
+          reminded_by_staff_id: string;
+          reminded_at: string;
+          note: string | null;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["reminder_logs"]["Row"],
+          "id" | "reminded_at"
+        > & {
+          id?: string;
+          reminded_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["reminder_logs"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       clients_view: {
@@ -512,6 +540,14 @@ export interface Database {
           p_source_material_id: string | null;
         };
         Returns: string;
+      };
+      cancel_post_record: {
+        Args: {
+          p_post_record_id: string;
+          p_staff_id: string;
+          p_reason: string;
+        };
+        Returns: undefined;
       };
     };
     Enums: Record<string, never>;
