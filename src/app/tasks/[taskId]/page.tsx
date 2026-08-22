@@ -145,6 +145,15 @@ export default async function TaskDetailPage({
         </dl>
       </section>
 
+      {task.status === "posting_waiting" && client ? (
+        <Link
+          href={`/clients/${client.id}/post-records/new?type=${task.post_type}&taskId=${task.id}`}
+          className="w-full rounded-md bg-green-600 px-4 py-4 text-center text-base font-medium text-white"
+        >
+          投稿実績を登録する
+        </Link>
+      ) : null}
+
       <section className="rounded-lg border border-neutral-200 bg-white p-6">
         <h2 className="mb-3 text-sm font-semibold text-neutral-700">素材待ちへの変更</h2>
         {canSetMaterialWaiting ? (

@@ -17,6 +17,7 @@ import { listMaterialsForClient } from "@/lib/materials/queries";
 import { buildMaterialFormUrl } from "@/lib/materials/formToken";
 import { listClientConfirmationsForClient } from "@/lib/clientConfirmations/queries";
 import { CLIENT_CONFIRMATION_STATUS_LABELS } from "@/lib/clientConfirmations/labels";
+import { listPostRecordsForClient, listRecentlyCompletedTasks } from "@/lib/postRecords/queries";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { CopyButton } from "@/components/CopyButton";
 import {
@@ -44,7 +45,6 @@ type TabKey = (typeof TABS)[number]["key"];
 
 const NOT_YET_IMPLEMENTED: Partial<Record<TabKey, string>> = {
   consumption: "Phase 4（担当者ダッシュボード）以降で実装予定です。",
-  posts: "Phase 8（投稿実績）で実装予定です。",
 };
 
 export default async function ClientDetailPage({
@@ -76,11 +76,13 @@ export default async function ClientDetailPage({
 
   let monthlySummary: Awaited<ReturnType<typeof getMonthlySummary>> = [];
   let upcomingTasks: Awaited<ReturnType<typeof listUpcomingProductionTasks>> = [];
+  let recentlyCompletedTasks: Awaited<ReturnType<typeof listRecentlyCompletedTasks>> = [];
   if (activeTab === "schedule") {
     await ensureRollingTasksForClient(supabase, id);
-    [monthlySummary, upcomingTasks] = await Promise.all([
+    [monthlySummary, upcomingTasks, recentlyCompletedTasks] = await Promise.all([
       getMonthlySummary(supabase, id),
       listUpcomingProductionTasks(supabase, id),
+      listRecentlyCompletedTasks(supabase, id),
     ]);
   }
 
@@ -107,6 +109,17 @@ export default async function ClientDetailPage({
   let confirmations: Awaited<ReturnType<typeof listClientConfirmationsForClient>> = [];
   if (activeTab === "confirmations") {
     confirmations = await listClientConfirmationsForClient(supabase, id);
+  }
+
+  let postRecords: Awaited<ReturnType<typeof listPostRecordsForClient>> = [];
+  let materialTitleById = new Map<string, string>();
+  if (activeTab === "posts") {
+    const [postRecordsResult, materialsForNames] = await Promise.all([
+      listPostRecordsForClient(supabase, id),
+      listMaterialsForClient(supabase, id),
+    ]);
+    postRecords = postRecordsResult;
+    materialTitleById = new Map(materialsForNames.map((m) => [m.id, m.title]));
   }
 
   const materialWaitDays =
@@ -282,6 +295,7 @@ export default async function ClientDetailPage({
                       <th className="px-2 py-1">持越し</th>
                       <th className="px-2 py-1">必要本数</th>
                       <th className="px-2 py-1">実績</th>
+                      <th className="px-2 py-1">残り</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -290,6 +304,7 @@ export default async function ClientDetailPage({
                         .filter((postType) => month.byPostType[postType].target > 0 || month.byPostType[postType].carryover > 0)
                         .map((postType) => {
                           const row = month.byPostType[postType];
+                          const remaining = Math.max(row.required - row.actual, 0);
                           return (
                             <tr key={`${month.year}-${month.month0}-${postType}`} className="border-b border-neutral-100">
                               <td className="px-2 py-1">{month.label}</td>
@@ -311,6 +326,13 @@ export default async function ClientDetailPage({
                               </td>
                               <td className="px-2 py-1 font-medium">{row.required}</td>
                               <td className="px-2 py-1">{row.actual}</td>
+                              <td className="px-2 py-1">
+                                {remaining > 0 ? (
+                                  <span className="font-medium text-red-700">{remaining}</span>
+                                ) : (
+                                  <span className="text-green-700">0</span>
+                                )}
+                              </td>
                             </tr>
                           );
                         }),
@@ -387,6 +409,31 @@ export default async function ClientDetailPage({
                 ))}
                 {upcomingTasks.length === 0 ? (
                   <li className="text-neutral-400">未完了のタスクはありません。</li>
+                ) : null}
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold text-neutral-500">投稿済み（直近）</h3>
+              <ul className="flex flex-col gap-2 text-sm">
+                {recentlyCompletedTasks.map((task) => (
+                  <li
+                    key={task.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-neutral-200 px-3 py-2"
+                  >
+                    <span>
+                      <span className="mr-2 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                        投稿済み
+                      </span>
+                      {task.title}
+                    </span>
+                    <Link href={`/clients/${id}?tab=posts`} className="text-xs underline">
+                      投稿履歴を見る
+                    </Link>
+                  </li>
+                ))}
+                {recentlyCompletedTasks.length === 0 ? (
+                  <li className="text-neutral-400">投稿済みのタスクはまだありません。</li>
                 ) : null}
               </ul>
             </div>
@@ -517,6 +564,60 @@ export default async function ClientDetailPage({
                 登録する
               </button>
             </form>
+          </div>
+        ) : null}
+
+        {activeTab === "posts" ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex justify-end">
+              <Link
+                href={`/clients/${id}/post-records/new`}
+                className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+              >
+                ＋ 投稿実績登録
+              </Link>
+            </div>
+            <ul className="flex flex-col gap-2 text-sm">
+              {postRecords.map((p) => (
+                <li key={p.id} className="rounded-md border border-neutral-200 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">
+                      {POST_TYPE_LABELS[p.post_type]} ・{" "}
+                      {new Date(p.posted_at).toLocaleDateString("ja-JP")}
+                    </span>
+                    <span className="text-xs text-neutral-400">
+                      投稿担当: {staffNameById.get(p.posted_by_staff_id) ?? "不明"}
+                    </span>
+                  </div>
+                  {p.title ? <p className="mt-1 text-xs text-neutral-600">{p.title}</p> : null}
+                  <div className="mt-1 flex flex-wrap gap-3 text-xs">
+                    {p.social_post_url ? (
+                      <a href={p.social_post_url} target="_blank" rel="noreferrer" className="underline">
+                        SNS投稿
+                      </a>
+                    ) : null}
+                    {p.canva_url ? (
+                      <a href={p.canva_url} target="_blank" rel="noreferrer" className="underline">
+                        Canva
+                      </a>
+                    ) : null}
+                    {p.final_drive_url ? (
+                      <a href={p.final_drive_url} target="_blank" rel="noreferrer" className="underline">
+                        制作物（Drive）
+                      </a>
+                    ) : null}
+                    {p.source_material_id ? (
+                      <span className="text-neutral-400">
+                        元素材: {materialTitleById.get(p.source_material_id) ?? "不明"}
+                      </span>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+              {postRecords.length === 0 ? (
+                <li className="text-neutral-400">投稿実績はまだありません。</li>
+              ) : null}
+            </ul>
           </div>
         ) : null}
 

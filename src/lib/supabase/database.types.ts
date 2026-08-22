@@ -496,7 +496,24 @@ export interface Database {
         Relationships: [];
       };
     };
-    Functions: Record<string, never>;
+    Functions: {
+      create_post_record_and_complete_task: {
+        Args: {
+          p_production_task_id: string;
+          p_client_id: string;
+          p_post_type: PostType;
+          p_posted_at: string;
+          p_posted_by_staff_id: string;
+          p_title: string | null;
+          p_social_post_url: string | null;
+          p_canva_url: string | null;
+          p_final_drive_file_id: string | null;
+          p_final_drive_url: string | null;
+          p_source_material_id: string | null;
+        };
+        Returns: string;
+      };
+    };
     Enums: Record<string, never>;
   };
 }

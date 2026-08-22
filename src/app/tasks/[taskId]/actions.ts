@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { assetTypeForPostType } from "@/lib/wchecks/labels";
-import type { ProductionTaskStatus } from "@/lib/supabase/database.types";
+import type { Database, ProductionTaskStatus } from "@/lib/supabase/database.types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const RESOLVABLE_STATUSES: ProductionTaskStatus[] = ["production_waiting", "in_production"];
 
@@ -16,6 +17,40 @@ function emptyToNull(value: FormDataEntryValue | null): string | null {
 function safeReturnTo(value: FormDataEntryValue | null, fallback: string): string {
   const text = String(value ?? "");
   return text.startsWith("/") ? text : fallback;
+}
+
+/** タスクの主担当・副担当へ通知する（同一人物が重複する場合は1件にまとめる）。 */
+async function notifyProductionStaff(
+  supabase: SupabaseClient<Database>,
+  taskId: string,
+  notification: { notificationType: string; title: string; body?: string | null },
+): Promise<void> {
+  const { data: task } = await supabase
+    .from("production_tasks")
+    .select("assignee_staff_id, secondary_staff_id")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  const recipientIds = [
+    ...new Set(
+      [task?.assignee_staff_id, task?.secondary_staff_id].filter(
+        (id): id is string => !!id,
+      ),
+    ),
+  ];
+
+  if (recipientIds.length === 0) return;
+
+  await supabase.from("notifications").insert(
+    recipientIds.map((staffId) => ({
+      recipient_staff_id: staffId,
+      notification_type: notification.notificationType,
+      title: notification.title,
+      body: notification.body ?? null,
+      entity_type: "production_task",
+      entity_id: taskId,
+    })),
+  );
 }
 
 /**
@@ -279,24 +314,12 @@ export async function approveClientConfirmationAction(formData: FormData) {
     .update({ status: "approved", responded_at: new Date().toISOString() })
     .eq("id", confirmationId);
 
-  const { data: task } = await supabase
-    .from("production_tasks")
-    .select("assignee_staff_id")
-    .eq("id", taskId)
-    .maybeSingle();
-
   await supabase.from("production_tasks").update({ status: "posting_waiting" }).eq("id", taskId);
 
-  if (task?.assignee_staff_id) {
-    await supabase.from("notifications").insert({
-      recipient_staff_id: task.assignee_staff_id,
-      notification_type: "client_confirmation_approved",
-      title: "顧客確認OK",
-      body: null,
-      entity_type: "production_task",
-      entity_id: taskId,
-    });
-  }
+  await notifyProductionStaff(supabase, taskId, {
+    notificationType: "client_confirmation_approved",
+    title: "顧客確認OK",
+  });
 
   redirect(`${returnTo}?saved=1`);
 }
@@ -332,24 +355,13 @@ export async function requestClientConfirmationRevisionAction(formData: FormData
     })
     .eq("id", confirmationId);
 
-  const { data: task } = await supabase
-    .from("production_tasks")
-    .select("assignee_staff_id")
-    .eq("id", taskId)
-    .maybeSingle();
-
   await supabase.from("production_tasks").update({ status: "in_production" }).eq("id", taskId);
 
-  if (task?.assignee_staff_id) {
-    await supabase.from("notifications").insert({
-      recipient_staff_id: task.assignee_staff_id,
-      notification_type: "client_confirmation_revision_requested",
-      title: "顧客確認: 修正依頼",
-      body: revisionComment,
-      entity_type: "production_task",
-      entity_id: taskId,
-    });
-  }
+  await notifyProductionStaff(supabase, taskId, {
+    notificationType: "client_confirmation_revision_requested",
+    title: "顧客確認: 修正依頼",
+    body: revisionComment,
+  });
 
   redirect(`${returnTo}?saved=1`);
 }
