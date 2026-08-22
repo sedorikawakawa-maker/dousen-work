@@ -110,6 +110,29 @@ export async function resolveTaskMaterialWaitingAction(formData: FormData) {
   redirect(`/tasks/${taskId}?saved=1`);
 }
 
+/** 制作待ち → 制作中。制作開始を明示するための操作（started_atを記録する）。 */
+export async function startProductionAction(formData: FormData) {
+  const taskId = String(formData.get("taskId"));
+  const supabase = await createSupabaseServerClient();
+
+  const { data: task } = await supabase
+    .from("production_tasks")
+    .select("status")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (!task || task.status !== "production_waiting") {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent("制作待ちのタスクのみ制作を開始できます")}`);
+  }
+
+  await supabase
+    .from("production_tasks")
+    .update({ status: "in_production", started_at: new Date().toISOString() })
+    .eq("id", taskId);
+
+  redirect(`/tasks/${taskId}?saved=1`);
+}
+
 /**
  * Wチェック登録。制作物リンク(投稿種別に応じてDrive動画/Canva)とWチェック担当(任意)を登録し、
  * production_tasks.status を wcheck_waiting にする。reviewer指定時のみ通知を作成する。
@@ -181,9 +204,13 @@ export async function approveWCheckAction(formData: FormData) {
 
   const { data: wcheck } = await supabase
     .from("w_checks")
-    .select("requested_by_staff_id")
+    .select("requested_by_staff_id, status")
     .eq("id", wcheckId)
     .maybeSingle();
+
+  if (!wcheck || wcheck.status !== "waiting") {
+    redirect(`${returnTo}?error=${encodeURIComponent("Wチェック待ちの依頼のみ操作できます")}`);
+  }
 
   await supabase
     .from("w_checks")
@@ -226,9 +253,13 @@ export async function requestWCheckRevisionAction(formData: FormData) {
 
   const { data: wcheck } = await supabase
     .from("w_checks")
-    .select("requested_by_staff_id")
+    .select("requested_by_staff_id, status")
     .eq("id", wcheckId)
     .maybeSingle();
+
+  if (!wcheck || wcheck.status !== "waiting") {
+    redirect(`${returnTo}?error=${encodeURIComponent("Wチェック待ちの依頼のみ操作できます")}`);
+  }
 
   await supabase
     .from("w_checks")

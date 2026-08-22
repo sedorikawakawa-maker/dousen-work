@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hashMaterialFormToken } from "@/lib/materials/formToken";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
+import { SubmitButton } from "@/components/SubmitButton";
 import { submitClientMaterialAction } from "./actions";
 
 export default async function MaterialFormPage({
@@ -99,12 +100,12 @@ export default async function MaterialFormPage({
             </label>
             <DriveMockNotice />
 
-            <button
-              type="submit"
+            <SubmitButton
+              pendingText="送信中..."
               className="mt-2 w-full rounded-md bg-neutral-900 px-4 py-2 text-base font-medium text-white"
             >
               送信する
-            </button>
+            </SubmitButton>
           </form>
         </div>
       )}

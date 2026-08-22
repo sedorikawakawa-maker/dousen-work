@@ -27,6 +27,7 @@ import {
   requestWCheckRevisionAction,
   resolveTaskMaterialWaitingAction,
   setTaskMaterialWaitingAction,
+  startProductionAction,
 } from "./actions";
 
 export default async function TaskDetailPage({
@@ -152,6 +153,18 @@ export default async function TaskDetailPage({
         >
           投稿実績を登録する
         </Link>
+      ) : null}
+
+      {task.status === "production_waiting" ? (
+        <form action={startProductionAction}>
+          <input type="hidden" name="taskId" value={taskId} />
+          <button
+            type="submit"
+            className="w-full rounded-md bg-neutral-900 px-4 py-4 text-base font-medium text-white"
+          >
+            制作を開始する（制作中にする）
+          </button>
+        </form>
       ) : null}
 
       <section className="rounded-lg border border-neutral-200 bg-white p-6">

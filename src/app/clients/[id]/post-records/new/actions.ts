@@ -90,6 +90,9 @@ export async function registerPostRecordAction(formData: FormData) {
   });
 
   if (error || !recordId) {
+    if (error?.code === "23505") {
+      fail("このタスクは既に投稿実績が登録されています（二重送信の可能性があります）");
+    }
     fail(error?.message ?? "登録に失敗しました");
   }
 

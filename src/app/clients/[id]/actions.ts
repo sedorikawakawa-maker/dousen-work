@@ -276,10 +276,17 @@ export async function saveScheduleRuleAction(formData: FormData) {
     );
   }
 
+  const monthlyTarget = Number(formData.get("monthlyTarget") ?? 0);
+  if (!Number.isInteger(monthlyTarget) || monthlyTarget < 0) {
+    redirect(
+      editUrl(clientId, { error: "月間本数は0以上の整数で入力してください", section: "schedule" }),
+    );
+  }
+
   const payload = {
     client_id: clientId,
     post_type: postType,
-    monthly_target: Number(formData.get("monthlyTarget") ?? 0),
+    monthly_target: monthlyTarget,
     weekday_rule: weekdayRule as unknown as Record<string, unknown>,
     production_lead_days: numberOrNull(formData.get("productionLeadDays")),
     wcheck_lead_days: numberOrNull(formData.get("wcheckLeadDays")),

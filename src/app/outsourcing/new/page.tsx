@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listClients, listActiveStaff } from "@/lib/clients/queries";
+import { SubmitButton } from "@/components/SubmitButton";
 import { createOutsourcingRequestAction } from "../actions";
 
 export default async function NewOutsourcingRequestPage({
@@ -153,12 +154,12 @@ export default async function NewOutsourcingRequestPage({
           </select>
         </label>
 
-        <button
-          type="submit"
+        <SubmitButton
+          pendingText="作成中..."
           className="mt-2 w-full rounded-md bg-neutral-900 px-4 py-4 text-base font-medium text-white"
         >
           作成してアップロードURLを発行
-        </button>
+        </SubmitButton>
       </form>
     </main>
   );

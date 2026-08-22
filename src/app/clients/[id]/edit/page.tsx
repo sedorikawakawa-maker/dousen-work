@@ -485,6 +485,9 @@ function ScheduleRuleForm({
         label="月間本数"
         name="monthlyTarget"
         type="number"
+        min={0}
+        max={99}
+        required
         defaultValue={String(rule?.monthly_target ?? 4)}
       />
 
@@ -558,18 +561,24 @@ function ScheduleRuleForm({
           label="制作開始: 投稿の◯日前"
           name="productionLeadDays"
           type="number"
+          min={0}
+          max={365}
           defaultValue={rule?.production_lead_days?.toString() ?? ""}
         />
         <Field
           label="Wチェック期限: 投稿の◯日前"
           name="wcheckLeadDays"
           type="number"
+          min={0}
+          max={365}
           defaultValue={rule?.wcheck_lead_days?.toString() ?? ""}
         />
         <Field
           label="顧客確認期限: 投稿の◯日前"
           name="clientConfirmLeadDays"
           type="number"
+          min={0}
+          max={365}
           defaultValue={rule?.client_confirm_lead_days?.toString() ?? ""}
         />
       </div>
@@ -612,12 +621,16 @@ function Field({
   type = "text",
   required = false,
   defaultValue,
+  min,
+  max,
 }: {
   label: string;
   name: string;
   type?: string;
   required?: boolean;
   defaultValue?: string;
+  min?: number;
+  max?: number;
 }) {
   return (
     <label className="text-sm font-medium text-neutral-700">
@@ -627,6 +640,8 @@ function Field({
         type={type}
         required={required}
         defaultValue={defaultValue}
+        min={min}
+        max={max}
         className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
       />
     </label>

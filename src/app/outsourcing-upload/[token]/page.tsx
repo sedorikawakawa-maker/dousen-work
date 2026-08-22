@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hashOutsourcingToken } from "@/lib/outsourcing/token";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
+import { SubmitButton } from "@/components/SubmitButton";
 import { submitOutsourcingDeliveryAction } from "./actions";
 
 const UPLOADABLE_STATUSES = new Set(["requested", "in_progress"]);
@@ -112,12 +113,12 @@ export default async function OutsourcingUploadPage({
               />
             </label>
 
-            <button
-              type="submit"
+            <SubmitButton
+              pendingText="送信中..."
               className="mt-2 w-full rounded-md bg-neutral-900 px-4 py-4 text-base font-medium text-white"
             >
               納品する
-            </button>
+            </SubmitButton>
           </form>
         </div>
       )}

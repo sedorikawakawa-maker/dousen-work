@@ -71,106 +71,167 @@ export default async function ManagementDashboardPage() {
 
       <section className="rounded-lg border border-neutral-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-neutral-700">要介入一覧</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-neutral-200 text-neutral-500">
-                <th className="px-2 py-1">顧客</th>
-                <th className="px-2 py-1">主担当</th>
-                <th className="px-2 py-1">問題の種類</th>
-                <th className="px-2 py-1">経過日数</th>
-                <th className="px-2 py-1">次に必要なアクション</th>
-                <th className="px-2 py-1">導線</th>
-              </tr>
-            </thead>
-            <tbody>
+
+        {overview.interventions.length === 0 ? (
+          <p className="py-6 text-center text-sm text-neutral-400">
+            現在、介入が必要な案件はありません。
+          </p>
+        ) : (
+          <>
+            {/* PC: テーブル表示 */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 text-neutral-500">
+                    <th className="px-2 py-1">顧客</th>
+                    <th className="px-2 py-1">主担当</th>
+                    <th className="px-2 py-1">問題の種類</th>
+                    <th className="px-2 py-1">経過日数</th>
+                    <th className="px-2 py-1">次に必要なアクション</th>
+                    <th className="px-2 py-1">導線</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overview.interventions.map((item) => (
+                    <tr key={item.key} className="border-b border-neutral-100">
+                      <td className="px-2 py-1">{item.clientName}</td>
+                      <td className="px-2 py-1">{item.primaryStaffName ?? "未設定"}</td>
+                      <td className="px-2 py-1">
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                          {item.issueType}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1">
+                        {item.elapsedDays !== null ? `${item.elapsedDays}日` : "—"}
+                      </td>
+                      <td className="px-2 py-1">{item.nextAction}</td>
+                      <td className="px-2 py-1">
+                        <Link href={item.href} className="underline">
+                          開く
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* スマホ: カード表示 */}
+            <div className="flex flex-col gap-2 md:hidden">
               {overview.interventions.map((item) => (
-                <tr key={item.key} className="border-b border-neutral-100">
-                  <td className="px-2 py-1">{item.clientName}</td>
-                  <td className="px-2 py-1">{item.primaryStaffName ?? "未設定"}</td>
-                  <td className="px-2 py-1">
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  className="flex flex-col gap-1 rounded-md border border-neutral-200 p-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-neutral-900">{item.clientName}</span>
                     <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
                       {item.issueType}
                     </span>
-                  </td>
-                  <td className="px-2 py-1">{item.elapsedDays !== null ? `${item.elapsedDays}日` : "—"}</td>
-                  <td className="px-2 py-1">{item.nextAction}</td>
-                  <td className="px-2 py-1">
-                    <Link href={item.href} className="underline">
-                      開く
-                    </Link>
-                  </td>
-                </tr>
+                  </div>
+                  <p className="text-xs text-neutral-500">
+                    主担当: {item.primaryStaffName ?? "未設定"}
+                    {item.elapsedDays !== null ? ` ／ 経過${item.elapsedDays}日` : ""}
+                  </p>
+                  <p className="text-xs text-neutral-500">次のアクション: {item.nextAction}</p>
+                </Link>
               ))}
-              {overview.interventions.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-2 py-6 text-center text-neutral-400">
-                    現在、介入が必要な案件はありません。
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          </>
+        )}
       </section>
 
       <section className="rounded-lg border border-neutral-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-neutral-700">前月未達・持越し</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-neutral-200 text-neutral-500">
-                <th className="px-2 py-1">顧客</th>
-                <th className="px-2 py-1">月</th>
-                <th className="px-2 py-1">投稿種別</th>
-                <th className="px-2 py-1">実績/目標</th>
-                <th className="px-2 py-1">未達</th>
-                <th className="px-2 py-1">状態</th>
-              </tr>
-            </thead>
-            <tbody>
+
+        {overview.pastMonthShortfalls.length === 0 ? (
+          <p className="py-6 text-center text-sm text-neutral-400">
+            前月以前の未達・持越しはありません。
+          </p>
+        ) : (
+          <>
+            {/* PC: テーブル表示 */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[560px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 text-neutral-500">
+                    <th className="px-2 py-1">顧客</th>
+                    <th className="px-2 py-1">月</th>
+                    <th className="px-2 py-1">投稿種別</th>
+                    <th className="px-2 py-1">実績/目標</th>
+                    <th className="px-2 py-1">未達</th>
+                    <th className="px-2 py-1">状態</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overview.pastMonthShortfalls.map((row) => {
+                    const [year, month] = row.sourceMonth.split("-");
+                    return (
+                      <tr
+                        key={`${row.clientId}-${row.postType}-${row.sourceMonth}`}
+                        className="border-b border-neutral-100"
+                      >
+                        <td className="px-2 py-1">
+                          <Link href={`/clients/${row.clientId}?tab=schedule`} className="underline">
+                            {row.clientName}
+                          </Link>
+                        </td>
+                        <td className="px-2 py-1">
+                          {year}年{Number(month)}月
+                        </td>
+                        <td className="px-2 py-1">{POST_TYPE_LABELS[row.postType]}</td>
+                        <td className="px-2 py-1">
+                          {row.actual}/{row.total}
+                        </td>
+                        <td className="px-2 py-1 font-medium text-red-700">{row.shortfall}</td>
+                        <td className="px-2 py-1">
+                          {row.needsReschedule ? (
+                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                              再日程設定が必要
+                            </span>
+                          ) : (
+                            <span className="text-xs text-neutral-400">日程設定済み</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* スマホ: カード表示 */}
+            <div className="flex flex-col gap-2 md:hidden">
               {overview.pastMonthShortfalls.map((row) => {
                 const [year, month] = row.sourceMonth.split("-");
                 return (
-                  <tr
+                  <Link
                     key={`${row.clientId}-${row.postType}-${row.sourceMonth}`}
-                    className="border-b border-neutral-100"
+                    href={`/clients/${row.clientId}?tab=schedule`}
+                    className="flex flex-col gap-1 rounded-md border border-neutral-200 p-3"
                   >
-                    <td className="px-2 py-1">
-                      <Link href={`/clients/${row.clientId}?tab=schedule`} className="underline">
-                        {row.clientName}
-                      </Link>
-                    </td>
-                    <td className="px-2 py-1">
-                      {year}年{Number(month)}月
-                    </td>
-                    <td className="px-2 py-1">{POST_TYPE_LABELS[row.postType]}</td>
-                    <td className="px-2 py-1">
-                      {row.actual}/{row.total}
-                    </td>
-                    <td className="px-2 py-1 font-medium text-red-700">{row.shortfall}</td>
-                    <td className="px-2 py-1">
-                      {row.needsReschedule ? (
-                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                          再日程設定が必要
-                        </span>
-                      ) : (
-                        <span className="text-xs text-neutral-400">日程設定済み</span>
-                      )}
-                    </td>
-                  </tr>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium text-neutral-900">{row.clientName}</span>
+                      <span className="text-xs text-neutral-500">
+                        {year}年{Number(month)}月 ・ {POST_TYPE_LABELS[row.postType]}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-600">
+                      実績/目標: {row.actual}/{row.total} ・{" "}
+                      <span className="font-medium text-red-700">未達{row.shortfall}</span>
+                    </p>
+                    {row.needsReschedule ? (
+                      <span className="w-fit rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                        再日程設定が必要
+                      </span>
+                    ) : null}
+                  </Link>
                 );
               })}
-              {overview.pastMonthShortfalls.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-2 py-6 text-center text-neutral-400">
-                    前月以前の未達・持越しはありません。
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          </>
+        )}
       </section>
     </main>
   );

@@ -60,5 +60,8 @@ export function resolveNotificationHref(
     const clientId = materialClientIdById.get(notification.entity_id);
     if (clientId) return `/clients/${clientId}?tab=materials`;
   }
+  if (notification.entity_type === "outsourcing_request" && notification.entity_id) {
+    return `/outsourcing/${notification.entity_id}`;
+  }
   return "/";
 }

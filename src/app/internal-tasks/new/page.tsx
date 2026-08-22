@@ -3,6 +3,7 @@ import { getCurrentStaff } from "@/lib/auth/session";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listActiveStaff, listClients } from "@/lib/clients/queries";
 import { INTERNAL_TASK_PRIORITY_OPTIONS } from "@/lib/internalTasks/labels";
+import { SubmitButton } from "@/components/SubmitButton";
 import { createInternalTaskAction } from "../actions";
 
 export default async function NewInternalTaskPage({
@@ -129,12 +130,12 @@ export default async function NewInternalTaskPage({
           />
         </label>
 
-        <button
-          type="submit"
+        <SubmitButton
+          pendingText="作成中..."
           className="mt-2 w-full rounded-md bg-neutral-900 px-4 py-4 text-base font-medium text-white"
         >
           作成する
-        </button>
+        </SubmitButton>
       </form>
     </main>
   );

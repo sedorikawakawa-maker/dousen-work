@@ -7,6 +7,7 @@ import { listMaterialsForClient } from "@/lib/materials/queries";
 import { listCandidateTasksForPostRecord } from "@/lib/postRecords/queries";
 import { POST_TYPE_LABELS, POST_TYPE_OPTIONS, PRODUCTION_TASK_STATUS_LABELS } from "@/lib/clients/labels";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
+import { SubmitButton } from "@/components/SubmitButton";
 import type { PostType } from "@/lib/supabase/database.types";
 import { registerPostRecordAction } from "./actions";
 
@@ -223,12 +224,12 @@ export default async function NewPostRecordPage({
           </select>
         </label>
 
-        <button
-          type="submit"
+        <SubmitButton
+          pendingText="登録中..."
           className="mt-2 w-full rounded-md bg-neutral-900 px-4 py-4 text-base font-medium text-white"
         >
           登録する
-        </button>
+        </SubmitButton>
       </form>
     </main>
   );
