@@ -10,6 +10,8 @@ export function getSupabaseUrl(): string {
   return requireEnv("NEXT_PUBLIC_SUPABASE_URL");
 }
 
-export function getSupabaseAnonKey(): string {
-  return requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+// Supabaseの新しいキー命名（publishable key / secret key）に統一。
+// 旧来の「anon key」に相当するクライアント公開用キー。
+export function getSupabasePublishableKey(): string {
+  return requireEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
 }

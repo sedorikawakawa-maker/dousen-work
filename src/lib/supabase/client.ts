@@ -2,8 +2,8 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import type { Database } from "./database.types";
-import { getSupabaseAnonKey, getSupabaseUrl } from "./env";
+import { getSupabasePublishableKey, getSupabaseUrl } from "./env";
 
 export function createSupabaseBrowserClient() {
-  return createBrowserClient<Database>(getSupabaseUrl(), getSupabaseAnonKey());
+  return createBrowserClient<Database>(getSupabaseUrl(), getSupabasePublishableKey());
 }
