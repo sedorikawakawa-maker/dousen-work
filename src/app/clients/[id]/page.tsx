@@ -15,6 +15,8 @@ import { ensureRollingTasksForClient, getMonthlySummary } from "@/lib/scheduling
 import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
 import { listMaterialsForClient } from "@/lib/materials/queries";
 import { buildMaterialFormUrl } from "@/lib/materials/formToken";
+import { listClientConfirmationsForClient } from "@/lib/clientConfirmations/queries";
+import { CLIENT_CONFIRMATION_STATUS_LABELS } from "@/lib/clientConfirmations/labels";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { CopyButton } from "@/components/CopyButton";
 import {
@@ -43,7 +45,6 @@ type TabKey = (typeof TABS)[number]["key"];
 const NOT_YET_IMPLEMENTED: Partial<Record<TabKey, string>> = {
   consumption: "Phase 4（担当者ダッシュボード）以降で実装予定です。",
   posts: "Phase 8（投稿実績）で実装予定です。",
-  confirmations: "Phase 7（顧客確認）で実装予定です。",
 };
 
 export default async function ClientDetailPage({
@@ -101,6 +102,11 @@ export default async function ClientDetailPage({
     if (newToken) {
       newlyIssuedFormUrl = await buildMaterialFormUrl(newToken);
     }
+  }
+
+  let confirmations: Awaited<ReturnType<typeof listClientConfirmationsForClient>> = [];
+  if (activeTab === "confirmations") {
+    confirmations = await listClientConfirmationsForClient(supabase, id);
   }
 
   const materialWaitDays =
@@ -512,6 +518,35 @@ export default async function ClientDetailPage({
               </button>
             </form>
           </div>
+        ) : null}
+
+        {activeTab === "confirmations" ? (
+          <ul className="flex flex-col gap-2 text-sm">
+            {confirmations.map((c) => (
+              <li key={c.id} className="rounded-md border border-neutral-200 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>確認依頼日: {new Date(c.requested_at).toLocaleString("ja-JP")}</span>
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                    {CLIENT_CONFIRMATION_STATUS_LABELS[c.status]}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-neutral-500">
+                  依頼者: {staffNameById.get(c.requested_by_staff_id) ?? "不明"}
+                </p>
+                {c.responded_at ? (
+                  <p className="text-xs text-neutral-500">
+                    返答日: {new Date(c.responded_at).toLocaleString("ja-JP")}
+                  </p>
+                ) : null}
+                {c.revision_comment ? (
+                  <p className="text-xs text-neutral-500">修正内容: {c.revision_comment}</p>
+                ) : null}
+              </li>
+            ))}
+            {confirmations.length === 0 ? (
+              <li className="text-neutral-400">顧客確認の履歴はありません。</li>
+            ) : null}
+          </ul>
         ) : null}
 
         {activeTab === "links" ? (

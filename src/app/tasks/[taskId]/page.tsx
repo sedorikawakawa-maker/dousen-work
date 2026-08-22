@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listActiveStaff } from "@/lib/clients/queries";
 import { listMaterialsForClient } from "@/lib/materials/queries";
 import { listWChecksForTask } from "@/lib/wchecks/queries";
+import { listClientConfirmationsForTask } from "@/lib/clientConfirmations/queries";
 import { PRODUCTION_TASK_STATUS_LABELS, POST_TYPE_LABELS } from "@/lib/clients/labels";
 import {
   WCHECK_ASSET_TYPE_LABELS,
@@ -11,10 +12,18 @@ import {
   WCHECK_STATUS_LABELS,
   assetTypeForPostType,
 } from "@/lib/wchecks/labels";
+import { CLIENT_CONFIRMATION_STATUS_LABELS } from "@/lib/clientConfirmations/labels";
 import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
 import {
+  getClientConfirmationElapsedDays,
+  getClientConfirmationLevel,
+} from "@/lib/reminders/clientConfirmation";
+import {
+  approveClientConfirmationAction,
   approveWCheckAction,
   registerWCheckAction,
+  requestClientConfirmationAction,
+  requestClientConfirmationRevisionAction,
   requestWCheckRevisionAction,
   resolveTaskMaterialWaitingAction,
   setTaskMaterialWaitingAction,
@@ -41,16 +50,38 @@ export default async function TaskDetailPage({
     notFound();
   }
 
-  const [{ data: client }, staffOptions, materials, wChecks] = await Promise.all([
-    supabase.from("clients_view").select("id, company_name, shop_name").eq("id", task.client_id).maybeSingle(),
-    listActiveStaff(supabase),
-    listMaterialsForClient(supabase, task.client_id),
-    listWChecksForTask(supabase, taskId),
-  ]);
+  const [{ data: client }, staffOptions, materials, wChecks, confirmations, { data: lineLink }] =
+    await Promise.all([
+      supabase.from("clients_view").select("id, company_name, shop_name").eq("id", task.client_id).maybeSingle(),
+      listActiveStaff(supabase),
+      listMaterialsForClient(supabase, task.client_id),
+      listWChecksForTask(supabase, taskId),
+      listClientConfirmationsForTask(supabase, taskId),
+      supabase
+        .from("client_links")
+        .select("url")
+        .eq("client_id", task.client_id)
+        .eq("link_type", "official_line")
+        .maybeSingle(),
+    ]);
 
   const staffNameById = new Map(staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]));
   const pendingWCheck = wChecks.find((w) => w.status === "waiting");
   const wCheckHistory = wChecks.filter((w) => w.id !== pendingWCheck?.id);
+  const pendingConfirmation = confirmations.find((c) => c.status === "waiting");
+  const confirmationHistory = confirmations.filter((c) => c.id !== pendingConfirmation?.id);
+  const confirmationDays = pendingConfirmation
+    ? getClientConfirmationElapsedDays(pendingConfirmation.requested_at)
+    : null;
+  const confirmationLevel = pendingConfirmation
+    ? getClientConfirmationLevel(pendingConfirmation.requested_at)
+    : "none";
+  const confirmationBadgeClass =
+    confirmationLevel === "urgent"
+      ? "bg-red-100 text-red-700"
+      : confirmationLevel === "warning"
+        ? "bg-yellow-100 text-yellow-700"
+        : "bg-neutral-100 text-neutral-600";
 
   const canSetMaterialWaiting =
     task.status === "production_waiting" || task.status === "in_production";
@@ -293,6 +324,127 @@ export default async function TaskDetailPage({
                   {new Date(w.requested_at).toLocaleString("ja-JP")} — {WCHECK_STATUS_LABELS[w.status]}
                   {w.reviewed_at ? `（${new Date(w.reviewed_at).toLocaleString("ja-JP")}）` : ""}
                   {w.revision_comment ? ` / ${w.revision_comment}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="rounded-lg border border-neutral-200 bg-white p-6">
+        <h2 className="mb-3 text-sm font-semibold text-neutral-700">顧客確認</h2>
+
+        {pendingConfirmation ? (
+          <div className="flex flex-col gap-3">
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt className="text-xs text-neutral-400">確認依頼日</dt>
+                <dd className="flex items-center gap-2 text-neutral-900">
+                  {new Date(pendingConfirmation.requested_at).toLocaleString("ja-JP")}
+                  {confirmationDays !== null ? (
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${confirmationBadgeClass}`}>
+                      {confirmationDays}日経過
+                    </span>
+                  ) : null}
+                </dd>
+              </div>
+              <InfoRow
+                label="依頼者"
+                value={staffNameById.get(pendingConfirmation.requested_by_staff_id) ?? "不明"}
+              />
+            </dl>
+
+            {lineLink?.url ? (
+              <a
+                href={lineLink.url}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full rounded-md border border-green-400 bg-green-50 px-4 py-3 text-center text-sm font-medium text-green-800"
+              >
+                公式LINEを開く
+              </a>
+            ) : null}
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <form action={approveClientConfirmationAction}>
+                <input type="hidden" name="confirmationId" value={pendingConfirmation.id} />
+                <input type="hidden" name="taskId" value={taskId} />
+                <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
+                <button
+                  type="submit"
+                  className="w-full rounded-md bg-green-600 px-4 py-3 text-sm font-medium text-white"
+                >
+                  顧客OK
+                </button>
+              </form>
+              <details className="rounded-md border border-neutral-300">
+                <summary className="cursor-pointer px-4 py-3 text-center text-sm font-medium text-red-700">
+                  修正依頼
+                </summary>
+                <form
+                  action={requestClientConfirmationRevisionAction}
+                  className="flex flex-col gap-2 p-3 pt-0"
+                >
+                  <input type="hidden" name="confirmationId" value={pendingConfirmation.id} />
+                  <input type="hidden" name="taskId" value={taskId} />
+                  <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
+                  <textarea
+                    name="revisionComment"
+                    rows={2}
+                    required
+                    placeholder="修正内容"
+                    className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    className="w-full rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    修正依頼を記録
+                  </button>
+                </form>
+              </details>
+            </div>
+          </div>
+        ) : task.status === "client_confirmation_waiting" ? (
+          <form action={requestClientConfirmationAction} className="flex flex-col gap-2">
+            <input type="hidden" name="taskId" value={taskId} />
+            <p className="text-xs text-neutral-500">
+              公式LINE等で実際に顧客へ送った後に押してください。LINE本文自体はDOUSEN
+              WORKに保存されません。
+            </p>
+            {lineLink?.url ? (
+              <a
+                href={lineLink.url}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full rounded-md border border-green-400 bg-green-50 px-4 py-3 text-center text-sm font-medium text-green-800"
+              >
+                公式LINEを開く
+              </a>
+            ) : null}
+            <button
+              type="submit"
+              className="w-full rounded-md bg-neutral-900 px-4 py-3 text-sm font-medium text-white"
+            >
+              顧客確認依頼済みにする
+            </button>
+          </form>
+        ) : (
+          <p className="text-sm text-neutral-400">
+            WチェックOK後（顧客確認へ進められる状態）になると依頼を登録できます。
+          </p>
+        )}
+
+        {confirmationHistory.length > 0 ? (
+          <div className="mt-4 border-t border-neutral-100 pt-3">
+            <h3 className="mb-2 text-xs font-semibold text-neutral-500">顧客確認履歴</h3>
+            <ul className="flex flex-col gap-2 text-xs text-neutral-500">
+              {confirmationHistory.map((c) => (
+                <li key={c.id}>
+                  {new Date(c.requested_at).toLocaleString("ja-JP")} —{" "}
+                  {CLIENT_CONFIRMATION_STATUS_LABELS[c.status]}
+                  {c.responded_at ? `（${new Date(c.responded_at).toLocaleString("ja-JP")}）` : ""}
+                  {c.revision_comment ? ` / ${c.revision_comment}` : ""}
                 </li>
               ))}
             </ul>

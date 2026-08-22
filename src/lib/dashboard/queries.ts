@@ -3,6 +3,11 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AssignmentType, Database } from "@/lib/supabase/database.types";
 import { listPendingWChecksWithTasks, type PendingWCheckItem } from "@/lib/wchecks/queries";
+import {
+  listPendingClientConfirmationsWithTasks,
+  type PendingConfirmationItem,
+} from "@/lib/clientConfirmations/queries";
+import { getClientConfirmationElapsedDays } from "@/lib/reminders/clientConfirmation";
 
 type TypedClient = SupabaseClient<Database>;
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
@@ -104,6 +109,8 @@ export interface DashboardData {
   materialWaiting14Clients: DashboardClientRow[];
   unassignedTasks: ProductionTaskRow[];
   newMaterials: MaterialRow[];
+  /** 自分の担当顧客分のみ、経過日数の降順（催促優先度順）。 */
+  myClientConfirmationWaitingItems: PendingConfirmationItem[];
 }
 
 function relevantDueDates(task: ProductionTaskRow): string[] {
@@ -214,6 +221,16 @@ export async function getDashboardData(
     newMaterials = data ?? [];
   }
 
+  const myClientIdSet = new Set(myClientIds);
+  const pendingConfirmations = await listPendingClientConfirmationsWithTasks(supabase);
+  const myClientConfirmationWaitingItems = pendingConfirmations
+    .filter((item) => myClientIdSet.has(item.task.client_id))
+    .sort((a, b) => {
+      const daysA = getClientConfirmationElapsedDays(a.confirmation.requested_at) ?? 0;
+      const daysB = getClientConfirmationElapsedDays(b.confirmation.requested_at) ?? 0;
+      return daysB - daysA;
+    });
+
   return {
     myClients,
     dueTodayTasks,
@@ -222,5 +239,6 @@ export async function getDashboardData(
     materialWaiting14Clients,
     unassignedTasks: unassignedTasks ?? [],
     newMaterials,
+    myClientConfirmationWaitingItems,
   };
 }

@@ -39,6 +39,8 @@ export type WCheckAssetType = "drive_video" | "canva";
 
 export type WCheckStatus = "waiting" | "approved" | "revision_requested";
 
+export type ClientConfirmationStatus = "waiting" | "approved" | "revision_requested";
+
 export type ProductionTaskStatus =
   | "material_waiting"
   | "production_waiting"
@@ -452,6 +454,33 @@ export interface Database {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["w_checks"]["Insert"]>;
+        Relationships: [];
+      };
+      client_confirmations: {
+        Row: {
+          id: string;
+          production_task_id: string;
+          requested_by_staff_id: string;
+          status: ClientConfirmationStatus;
+          requested_at: string;
+          responded_at: string | null;
+          revision_comment: string | null;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["client_confirmations"]["Row"],
+          "id" | "status" | "requested_at" | "responded_at" | "revision_comment" | "created_at"
+        > & {
+          id?: string;
+          status?: ClientConfirmationStatus;
+          requested_at?: string;
+          responded_at?: string | null;
+          revision_comment?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["client_confirmations"]["Insert"]
+        >;
         Relationships: [];
       };
     };

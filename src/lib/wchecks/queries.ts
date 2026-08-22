@@ -49,3 +49,29 @@ export async function listWChecksForTask(
   if (error) throw error;
   return data ?? [];
 }
+
+/**
+ * 各タスクについて直近でOKになったWチェックを取得する（顧客確認画面での
+ * 「制作物リンク」表示に使う。顧客確認自体はリンクを保持しないため。）
+ */
+export async function getLatestApprovedWCheckByTaskIds(
+  supabase: TypedClient,
+  taskIds: string[],
+): Promise<Map<string, WCheckRow>> {
+  const result = new Map<string, WCheckRow>();
+  if (taskIds.length === 0) return result;
+
+  const { data } = await supabase
+    .from("w_checks")
+    .select("*")
+    .in("production_task_id", taskIds)
+    .eq("status", "approved")
+    .order("reviewed_at", { ascending: false });
+
+  for (const wcheck of data ?? []) {
+    if (!result.has(wcheck.production_task_id)) {
+      result.set(wcheck.production_task_id, wcheck);
+    }
+  }
+  return result;
+}

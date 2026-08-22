@@ -219,3 +219,137 @@ export async function requestWCheckRevisionAction(formData: FormData) {
 
   redirect(`${returnTo}?saved=1`);
 }
+
+/**
+ * 顧客確認依頼済みの登録。
+ * 重要: WチェックOKになっただけでは client_confirmations を作らない。
+ * 実際に担当者が公式LINE等で顧客へ送った後、この操作で初めて作成する。
+ * 登録だけでは社内通知は作らない。
+ */
+export async function requestClientConfirmationAction(formData: FormData) {
+  const taskId = String(formData.get("taskId"));
+  const staff = await getCurrentStaff();
+  if (!staff) redirect("/login");
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: task } = await supabase
+    .from("production_tasks")
+    .select("status")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (!task || task.status !== "client_confirmation_waiting") {
+    redirect(
+      `/tasks/${taskId}?error=${encodeURIComponent("WチェックOK後のタスクのみ顧客確認依頼を登録できます")}`,
+    );
+  }
+
+  const { error } = await supabase.from("client_confirmations").insert({
+    production_task_id: taskId,
+    requested_by_staff_id: staff.id,
+  });
+
+  if (error) {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  redirect(`/tasks/${taskId}?saved=1`);
+}
+
+/** 顧客OK。投稿待ちへ進め、制作担当者へ通知する。 */
+export async function approveClientConfirmationAction(formData: FormData) {
+  const confirmationId = String(formData.get("confirmationId"));
+  const taskId = String(formData.get("taskId"));
+  const returnTo = safeReturnTo(formData.get("returnTo"), `/tasks/${taskId}`);
+  const supabase = await createSupabaseServerClient();
+
+  const { data: confirmation } = await supabase
+    .from("client_confirmations")
+    .select("status")
+    .eq("id", confirmationId)
+    .maybeSingle();
+
+  if (!confirmation || confirmation.status !== "waiting") {
+    redirect(`${returnTo}?error=${encodeURIComponent("確認待ちの依頼のみ操作できます")}`);
+  }
+
+  await supabase
+    .from("client_confirmations")
+    .update({ status: "approved", responded_at: new Date().toISOString() })
+    .eq("id", confirmationId);
+
+  const { data: task } = await supabase
+    .from("production_tasks")
+    .select("assignee_staff_id")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  await supabase.from("production_tasks").update({ status: "posting_waiting" }).eq("id", taskId);
+
+  if (task?.assignee_staff_id) {
+    await supabase.from("notifications").insert({
+      recipient_staff_id: task.assignee_staff_id,
+      notification_type: "client_confirmation_approved",
+      title: "顧客確認OK",
+      body: null,
+      entity_type: "production_task",
+      entity_id: taskId,
+    });
+  }
+
+  redirect(`${returnTo}?saved=1`);
+}
+
+/** 顧客から修正依頼。制作中へ戻し、制作担当者へ通知する。修正後は再度Wチェック登録から進める。 */
+export async function requestClientConfirmationRevisionAction(formData: FormData) {
+  const confirmationId = String(formData.get("confirmationId"));
+  const taskId = String(formData.get("taskId"));
+  const revisionComment = String(formData.get("revisionComment") ?? "").trim();
+  const returnTo = safeReturnTo(formData.get("returnTo"), `/tasks/${taskId}`);
+  const supabase = await createSupabaseServerClient();
+
+  if (!revisionComment) {
+    redirect(`${returnTo}?error=${encodeURIComponent("修正内容を入力してください")}`);
+  }
+
+  const { data: confirmation } = await supabase
+    .from("client_confirmations")
+    .select("status")
+    .eq("id", confirmationId)
+    .maybeSingle();
+
+  if (!confirmation || confirmation.status !== "waiting") {
+    redirect(`${returnTo}?error=${encodeURIComponent("確認待ちの依頼のみ操作できます")}`);
+  }
+
+  await supabase
+    .from("client_confirmations")
+    .update({
+      status: "revision_requested",
+      responded_at: new Date().toISOString(),
+      revision_comment: revisionComment,
+    })
+    .eq("id", confirmationId);
+
+  const { data: task } = await supabase
+    .from("production_tasks")
+    .select("assignee_staff_id")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  await supabase.from("production_tasks").update({ status: "in_production" }).eq("id", taskId);
+
+  if (task?.assignee_staff_id) {
+    await supabase.from("notifications").insert({
+      recipient_staff_id: task.assignee_staff_id,
+      notification_type: "client_confirmation_revision_requested",
+      title: "顧客確認: 修正依頼",
+      body: revisionComment,
+      entity_type: "production_task",
+      entity_id: taskId,
+    });
+  }
+
+  redirect(`${returnTo}?saved=1`);
+}

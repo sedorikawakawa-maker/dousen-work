@@ -12,6 +12,7 @@ import {
   PRODUCTION_TASK_STATUS_LABELS,
 } from "@/lib/clients/labels";
 import { getMaterialWaitElapsedDays } from "@/lib/reminders/material";
+import { getClientConfirmationElapsedDays } from "@/lib/reminders/clientConfirmation";
 import type { Database } from "@/lib/supabase/database.types";
 import { logoutAction } from "./logout-action";
 import { StatusSelect } from "./StatusSelect";
@@ -77,6 +78,12 @@ export default async function HomePage() {
           Wチェック待ち
         </Link>
         <Link
+          href="/client-confirmations"
+          className="rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+        >
+          顧客確認待ち
+        </Link>
+        <Link
           href="/clients/new"
           className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
         >
@@ -120,6 +127,41 @@ export default async function HomePage() {
           </ul>
           <Link href="/wchecks" className="mt-3 inline-block text-xs underline">
             Wチェック待ち一覧を開く →
+          </Link>
+        </AlertSection>
+
+        <AlertSection
+          title="顧客確認待ち"
+          count={dashboard.myClientConfirmationWaitingItems.length}
+          tone="urgent"
+        >
+          <ul className="flex flex-col gap-2 text-sm">
+            {dashboard.myClientConfirmationWaitingItems.map(({ confirmation, task }) => {
+              const days = getClientConfirmationElapsedDays(confirmation.requested_at);
+              const isUrgent = days !== null && days >= 14;
+              return (
+                <li key={confirmation.id}>
+                  <Link href={`/tasks/${task.id}`} className="hover:underline">
+                    {clientNameById.get(task.client_id) ?? "不明な顧客"} / {task.title}
+                  </Link>
+                  {days !== null ? (
+                    <span
+                      className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
+                        isUrgent ? "bg-red-600 text-white" : "bg-yellow-100 text-yellow-800"
+                      }`}
+                    >
+                      {days}日経過{isUrgent ? "（最優先催促）" : ""}
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
+            {dashboard.myClientConfirmationWaitingItems.length === 0 ? (
+              <li className="text-neutral-400">顧客確認待ちはありません。</li>
+            ) : null}
+          </ul>
+          <Link href="/client-confirmations" className="mt-3 inline-block text-xs underline">
+            顧客確認待ち一覧を開く →
           </Link>
         </AlertSection>
 
