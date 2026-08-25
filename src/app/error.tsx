@@ -23,7 +23,7 @@ export default function GlobalError({
       <button
         type="button"
         onClick={reset}
-        className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+        className="rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
       >
         再読み込み
       </button>

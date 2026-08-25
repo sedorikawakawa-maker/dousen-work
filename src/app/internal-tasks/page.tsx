@@ -17,6 +17,9 @@ import type {
   InternalTaskStatus,
 } from "@/lib/supabase/database.types";
 import { updateInternalTaskStatusAction } from "./actions";
+import { PageContainer } from "@/components/PageContainer";
+import { StatusBadge } from "@/components/StatusBadge";
+import { UrgencyBadge } from "@/components/UrgencyBadge";
 
 export default async function InternalTasksPage({
   searchParams,
@@ -74,37 +77,41 @@ export default async function InternalTasksPage({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 px-4 py-6 sm:py-8">
-      <div className="flex items-center justify-between">
+    <PageContainer className="gap-6 bg-neutral-50 py-6 sm:py-8">
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-neutral-900">社内タスク</h1>
         <Link
           href="/internal-tasks/new"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+          className="whitespace-nowrap rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
         >
           ＋ 新規作成
         </Link>
       </div>
 
       {saved ? (
-        <p className="rounded-md bg-green-50 px-4 py-2 text-sm text-green-700">更新しました。</p>
+        <p className="rounded-2xl bg-[var(--accent-soft-bg)] px-4 py-2 text-sm text-[var(--accent-soft-text)]">
+          更新しました。
+        </p>
       ) : null}
-      {error ? (
-        <p className="rounded-md bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>
-      ) : null}
+      {error ? <p className="rounded-2xl bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p> : null}
 
-      <div className="flex flex-wrap gap-2 text-sm">
+      <div className="flex flex-wrap gap-1.5 text-sm">
         <Link
           href={buildFilterUrl({ scope: "mine" })}
-          className={`rounded-md px-3 py-1.5 ${
-            resolvedScope === "mine" ? "bg-neutral-900 text-white" : "border border-neutral-300 text-neutral-700"
+          className={`rounded-full px-3.5 py-1.5 font-medium ${
+            resolvedScope === "mine"
+              ? "bg-[var(--accent)] text-white"
+              : "border border-neutral-300 text-neutral-700"
           }`}
         >
           自分のタスク
         </Link>
         <Link
           href={buildFilterUrl({ scope: "all" })}
-          className={`rounded-md px-3 py-1.5 ${
-            resolvedScope === "all" ? "bg-neutral-900 text-white" : "border border-neutral-300 text-neutral-700"
+          className={`rounded-full px-3.5 py-1.5 font-medium ${
+            resolvedScope === "all"
+              ? "bg-[var(--accent)] text-white"
+              : "border border-neutral-300 text-neutral-700"
           }`}
         >
           全員
@@ -116,7 +123,7 @@ export default async function InternalTasksPage({
         <select
           name="assignee"
           defaultValue={assignee ?? ""}
-          className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+          className="rounded-full border border-neutral-300 px-3 py-2 text-sm"
         >
           <option value="">担当者: すべて</option>
           {staffOptions.map((s) => (
@@ -128,7 +135,7 @@ export default async function InternalTasksPage({
         <select
           name="category"
           defaultValue={category ?? ""}
-          className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+          className="rounded-full border border-neutral-300 px-3 py-2 text-sm"
         >
           <option value="">カテゴリ: すべて</option>
           {categories.map((c) => (
@@ -140,7 +147,7 @@ export default async function InternalTasksPage({
         <select
           name="status"
           defaultValue={status ?? ""}
-          className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+          className="rounded-full border border-neutral-300 px-3 py-2 text-sm"
         >
           <option value="">状態: すべて</option>
           {INTERNAL_TASK_STATUS_OPTIONS.map(([value, label]) => (
@@ -152,7 +159,7 @@ export default async function InternalTasksPage({
         <select
           name="priority"
           defaultValue={priority ?? ""}
-          className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+          className="rounded-full border border-neutral-300 px-3 py-2 text-sm"
         >
           <option value="">優先度: すべて</option>
           {INTERNAL_TASK_PRIORITY_OPTIONS.map(([value, label]) => (
@@ -163,61 +170,51 @@ export default async function InternalTasksPage({
         </select>
         <button
           type="submit"
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700"
+          className="rounded-full border border-neutral-300 bg-white px-3.5 py-2 text-sm text-neutral-700"
         >
           絞り込む
         </button>
       </form>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {tasks.map((task) => {
           const dueDate = task.due_at ? task.due_at.slice(0, 10) : null;
-          const isOverdue = dueDate && dueDate < today && task.status !== "done";
+          const isOverdue = !!(dueDate && dueDate < today && task.status !== "done");
           const isDueToday = dueDate === today && task.status !== "done";
           const nextStatus = INTERNAL_TASK_NEXT_STATUS[task.status];
 
           return (
             <div
               key={task.id}
-              className={`flex flex-col gap-2 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between ${
-                isOverdue
-                  ? "border-red-300 bg-red-50/40"
-                  : isDueToday
-                    ? "border-yellow-300 bg-yellow-50/40"
-                    : "border-neutral-200 bg-white"
+              className={`flex flex-col gap-2 rounded-2xl border border-neutral-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between ${
+                isOverdue ? "border-l-4 border-l-red-400" : isDueToday ? "border-l-4 border-l-red-300" : ""
               }`}
             >
-              <div className="flex flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Link
                     href={`/internal-tasks/${task.id}/edit`}
-                    className="font-medium text-neutral-900 hover:underline"
+                    className="font-semibold text-neutral-900 hover:underline"
                   >
                     {task.title}
                   </Link>
-                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                  {isOverdue ? (
+                    <UrgencyBadge level="overdue" />
+                  ) : isDueToday ? (
+                    <UrgencyBadge level="due_today" />
+                  ) : null}
+                  <StatusBadge status={task.status} label={INTERNAL_TASK_STATUS_LABELS[task.status]} />
+                  <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600">
                     {task.category}
                   </span>
-                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                  <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600">
                     {INTERNAL_TASK_PRIORITY_LABELS[task.priority]}
                   </span>
-                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                    {INTERNAL_TASK_STATUS_LABELS[task.status]}
-                  </span>
-                  {isOverdue ? (
-                    <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                      期限超過
-                    </span>
-                  ) : isDueToday ? (
-                    <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
-                      今日締切
-                    </span>
-                  ) : null}
                 </div>
                 <p className="text-xs text-neutral-500">
                   担当: {staffNameById.get(task.assignee_staff_id) ?? "不明"} ／{" "}
                   {task.client_id ? clientNameById.get(task.client_id) ?? "不明な顧客" : "社内"} ／ 期限:{" "}
-                  {dueDate ?? "未設定"}
+                  <span className="font-medium tabular-nums">{dueDate ?? "未設定"}</span>
                 </p>
               </div>
 
@@ -228,7 +225,7 @@ export default async function InternalTasksPage({
                   <input type="hidden" name="returnTo" value={buildFilterUrl({})} />
                   <button
                     type="submit"
-                    className="whitespace-nowrap rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700"
+                    className="whitespace-nowrap rounded-full border border-neutral-300 px-3.5 py-2 text-sm font-medium text-neutral-700"
                   >
                     {INTERNAL_TASK_NEXT_STATUS_LABEL[task.status]}
                   </button>
@@ -238,9 +235,11 @@ export default async function InternalTasksPage({
           );
         })}
         {tasks.length === 0 ? (
-          <p className="py-6 text-center text-sm text-neutral-400">該当するタスクはありません。</p>
+          <p className="rounded-2xl bg-white py-10 text-center text-sm text-neutral-400">
+            該当するタスクはありません。
+          </p>
         ) : null}
       </div>
-    </main>
+    </PageContainer>
   );
 }

@@ -1,26 +1,112 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/supabase/database.types";
+import type { ClientCurrentStatus, ContractStatus, Database } from "@/lib/supabase/database.types";
 
 type TypedClient = SupabaseClient<Database>;
 
-export async function listClients(supabase: TypedClient, query?: string) {
+export interface ClientListFilters {
+  /** 顧客名・店舗名・顧客IDの部分一致検索。 */
+  q?: string;
+  currentStatus?: ClientCurrentStatus;
+  contractStatus?: ContractStatus;
+  /** 主担当・副担当のいずれかにこのスタッフが割り当てられている顧客のみに絞り込む。 */
+  assigneeStaffId?: string;
+}
+
+export async function listClients(
+  supabase: TypedClient,
+  filters: ClientListFilters | string = {},
+) {
+  // 既存呼び出し（第2引数に検索文字列を直接渡す）との後方互換のため、string指定も受け付ける。
+  const { q, currentStatus, contractStatus, assigneeStaffId } =
+    typeof filters === "string" ? { q: filters, currentStatus: undefined, contractStatus: undefined, assigneeStaffId: undefined } : filters;
+
   let request = supabase
     .from("clients_view")
-    .select("id, client_code, company_name, shop_name, contract_status, current_status")
+    .select(
+      "id, client_code, company_name, shop_name, contract_status, current_status, material_wait_started_at, services, thumbnail_url",
+    )
     .order("client_code");
 
-  if (query && query.trim() !== "") {
-    const escaped = query.trim().replace(/[%_]/g, (match) => `\\${match}`);
+  if (q && q.trim() !== "") {
+    const escaped = q.trim().replace(/[%_]/g, (match) => `\\${match}`);
     request = request.or(
       `company_name.ilike.%${escaped}%,shop_name.ilike.%${escaped}%,client_code.ilike.%${escaped}%`,
     );
+  }
+  if (currentStatus) request = request.eq("current_status", currentStatus);
+  if (contractStatus) request = request.eq("contract_status", contractStatus);
+
+  if (assigneeStaffId) {
+    const { data: assignments } = await supabase
+      .from("client_assignments")
+      .select("client_id")
+      .eq("staff_id", assigneeStaffId)
+      .is("active_to", null);
+    const clientIds = [...new Set((assignments ?? []).map((a) => a.client_id))];
+    if (clientIds.length === 0) return [];
+    request = request.in("id", clientIds);
   }
 
   const { data, error } = await request;
   if (error) throw error;
   return data ?? [];
+}
+
+/** 顧客一覧画面の表示用に、顧客ごとの主担当/副担当の氏名をまとめて引く。 */
+export async function getClientAssignmentNames(
+  supabase: TypedClient,
+  clientIds: string[],
+): Promise<Map<string, { primaryName: string | null; secondaryName: string | null }>> {
+  const result = new Map<string, { primaryName: string | null; secondaryName: string | null }>();
+  if (clientIds.length === 0) return result;
+
+  const [{ data: assignments }, staffOptions] = await Promise.all([
+    supabase
+      .from("client_assignments")
+      .select("client_id, staff_id, assignment_type")
+      .in("client_id", clientIds)
+      .is("active_to", null),
+    listActiveStaff(supabase),
+  ]);
+
+  const staffNameById = new Map(staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]));
+
+  for (const clientId of clientIds) result.set(clientId, { primaryName: null, secondaryName: null });
+  for (const a of assignments ?? []) {
+    const entry = result.get(a.client_id);
+    if (!entry) continue;
+    const name = staffNameById.get(a.staff_id) ?? null;
+    if (a.assignment_type === "primary") entry.primaryName = name;
+    if (a.assignment_type === "secondary") entry.secondaryName = name;
+  }
+  return result;
+}
+
+/** 顧客一覧画面の「利用サービス」表示用に、有効な投稿ルールの投稿種別をまとめて引く。 */
+export async function getActiveServicePostTypes(
+  supabase: TypedClient,
+  clientIds: string[],
+): Promise<Map<string, Database["public"]["Tables"]["posting_schedule_rules"]["Row"]["post_type"][]>> {
+  const result = new Map<
+    string,
+    Database["public"]["Tables"]["posting_schedule_rules"]["Row"]["post_type"][]
+  >();
+  if (clientIds.length === 0) return result;
+
+  const { data } = await supabase
+    .from("posting_schedule_rules")
+    .select("client_id, post_type")
+    .in("client_id", clientIds)
+    .eq("is_active", true);
+
+  for (const rule of data ?? []) {
+    const list = result.get(rule.client_id) ?? [];
+    if (!list.includes(rule.post_type)) list.push(rule.post_type);
+    result.set(rule.client_id, list);
+  }
+  return result;
 }
 
 export async function listActiveStaff(supabase: TypedClient) {

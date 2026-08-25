@@ -3,8 +3,9 @@
 import { redirect } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { hashMaterialFormToken } from "@/lib/materials/formToken";
-import { notifyAssignedStaffOfNewMaterial } from "@/lib/materials/queries";
-import { getDriveService } from "@/lib/drive/DriveService";
+import { notifyAssignedStaffOfNewMaterialSubmission } from "@/lib/materials/queries";
+import { uploadFilesForMaterialSubmission } from "@/lib/materials/submissionUpload";
+import type { MaterialSubmissionFileInput } from "@/lib/supabase/database.types";
 
 function emptyToNull(value: FormDataEntryValue | null): string | null {
   const text = String(value ?? "").trim();
@@ -44,43 +45,52 @@ export async function submitClientMaterialAction(formData: FormData) {
     redirect(`/material-form/${token}?error=${encodeURIComponent("このURLは無効です")}`);
   }
 
-  let driveFileId: string | null = null;
-  let driveUrl: string | null = null;
-  const file = formData.get("file");
-  if (file instanceof File && file.size > 0) {
-    const drive = getDriveService();
-    const result = await drive.uploadFile({ file, clientId: client.id, folderHint: "materials" });
-    driveFileId = result.driveFileId;
-    driveUrl = result.driveUrl;
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+
+  // submission IDを先に確定し、Drive submissionフォルダの一意化とDB行のidに同じ値を使う。
+  // 複数ファイルはすべて成功して初めてDBへ登録する。1件でも失敗したら
+  // submission・materialsとも1件も作らない（中途半端な登録を防ぐ）。
+  let submissionId = "";
+  let driveFolderId: string | null = null;
+  let driveFolderUrl: string | null = null;
+  let uploadedFiles: MaterialSubmissionFileInput[] = [];
+  try {
+    const result = await uploadFilesForMaterialSubmission({ clientId: client.id, title, files });
+    submissionId = result.submissionId;
+    driveFolderId = result.driveFolderId;
+    driveFolderUrl = result.driveFolderUrl;
+    uploadedFiles = result.files;
+  } catch {
+    redirect(
+      `/material-form/${token}?error=${encodeURIComponent("ファイルの保存に失敗しました。時間をおいて再度お試しください")}`,
+    );
   }
 
-  const { data: material, error } = await admin
-    .from("materials")
-    .insert({
-      client_id: client.id,
-      title,
-      post_usage: emptyToNull(formData.get("postUsage")),
-      requested_post_timing: emptyToNull(formData.get("requestedPostTiming")),
-      editing_instructions: emptyToNull(formData.get("editingInstructions")),
-      caption_instructions: emptyToNull(formData.get("captionInstructions")),
-      contact_notes: emptyToNull(formData.get("contactNotes")),
-      shot_date: emptyToNull(formData.get("shotDate")),
-      drive_file_id: driveFileId,
-      drive_url: driveUrl,
-      submitted_by_type: "client",
-    })
-    .select("id")
-    .single();
+  // submission作成＋ファイル分のmaterials作成を1トランザクションで行うRPC。
+  const { data: createdSubmissionId, error } = await admin.rpc("create_client_material_submission", {
+    p_id: submissionId,
+    p_client_id: client.id,
+    p_title: title,
+    p_post_usage: emptyToNull(formData.get("postUsage")),
+    p_requested_post_timing: emptyToNull(formData.get("requestedPostTiming")),
+    p_editing_instructions: emptyToNull(formData.get("editingInstructions")),
+    p_caption_instructions: emptyToNull(formData.get("captionInstructions")),
+    p_contact_notes: emptyToNull(formData.get("contactNotes")),
+    p_shot_date: emptyToNull(formData.get("shotDate")),
+    p_drive_folder_id: driveFolderId,
+    p_drive_folder_url: driveFolderUrl,
+    p_files: uploadedFiles,
+  });
 
-  if (error || !material) {
+  if (error || !createdSubmissionId) {
     redirect(`/material-form/${token}?error=${encodeURIComponent("送信に失敗しました。時間をおいて再度お試しください")}`);
   }
 
-  await notifyAssignedStaffOfNewMaterial(admin, {
+  await notifyAssignedStaffOfNewMaterialSubmission(admin, {
     clientId: client.id,
     clientName: client.company_name,
-    materialId: material.id,
-    materialTitle: title,
+    submissionId: createdSubmissionId,
+    submissionTitle: title,
   });
 
   redirect(`/material-form/${token}?submitted=1`);

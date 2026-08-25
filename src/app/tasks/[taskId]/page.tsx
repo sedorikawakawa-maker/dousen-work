@@ -2,10 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listActiveStaff } from "@/lib/clients/queries";
-import { listMaterialsForClient } from "@/lib/materials/queries";
+import { listMaterialSubmissionsWithFilesForClient } from "@/lib/materials/queries";
 import { listWChecksForTask } from "@/lib/wchecks/queries";
 import { listClientConfirmationsForTask } from "@/lib/clientConfirmations/queries";
-import { PRODUCTION_TASK_STATUS_LABELS, POST_TYPE_LABELS } from "@/lib/clients/labels";
+import { PRODUCTION_TASK_STATUS_LABELS, POST_TYPE_LABELS, postUsageLabel } from "@/lib/clients/labels";
 import {
   WCHECK_ASSET_TYPE_LABELS,
   WCHECK_CRITERIA,
@@ -27,8 +27,13 @@ import {
   requestWCheckRevisionAction,
   resolveTaskMaterialWaitingAction,
   setTaskMaterialWaitingAction,
+  skipWCheckAction,
   startProductionAction,
 } from "./actions";
+import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { PageContainer } from "@/components/PageContainer";
+import { StatusBadge } from "@/components/StatusBadge";
+import { UrgencyBadge } from "@/components/UrgencyBadge";
 
 export default async function TaskDetailPage({
   params,
@@ -51,11 +56,11 @@ export default async function TaskDetailPage({
     notFound();
   }
 
-  const [{ data: client }, staffOptions, materials, wChecks, confirmations, { data: lineLink }] =
+  const [{ data: client }, staffOptions, materialSubmissions, wChecks, confirmations, { data: lineLink }] =
     await Promise.all([
       supabase.from("clients_view").select("id, company_name, shop_name").eq("id", task.client_id).maybeSingle(),
       listActiveStaff(supabase),
-      listMaterialsForClient(supabase, task.client_id),
+      listMaterialSubmissionsWithFilesForClient(supabase, task.client_id),
       listWChecksForTask(supabase, taskId),
       listClientConfirmationsForTask(supabase, taskId),
       supabase
@@ -77,26 +82,24 @@ export default async function TaskDetailPage({
   const confirmationLevel = pendingConfirmation
     ? getClientConfirmationLevel(pendingConfirmation.requested_at)
     : "none";
-  const confirmationBadgeClass =
-    confirmationLevel === "urgent"
-      ? "bg-red-100 text-red-700"
-      : confirmationLevel === "warning"
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-neutral-100 text-neutral-600";
 
   const canSetMaterialWaiting =
     task.status === "production_waiting" || task.status === "in_production";
   const materialWaitLevel = getMaterialWaitLevel(task.material_wait_started_at);
   const materialWaitDays = getMaterialWaitElapsedDays(task.material_wait_started_at);
-  const badgeClass =
-    materialWaitLevel === "urgent"
-      ? "bg-red-100 text-red-700"
-      : materialWaitLevel === "warning"
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-neutral-100 text-neutral-600";
+
+  const today = new Date().toISOString().slice(0, 10);
+  const wcheckDueUrgency =
+    !pendingWCheck || !task.wcheck_due_date
+      ? null
+      : task.wcheck_due_date < today
+        ? "overdue"
+        : task.wcheck_due_date === today
+          ? "due_today"
+          : null;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-8">
+    <PageContainer className="max-w-2xl gap-5 bg-neutral-50 py-8">
       <div>
         {client ? (
           <Link href={`/clients/${client.id}?tab=schedule`} className="text-sm text-neutral-500">
@@ -105,39 +108,83 @@ export default async function TaskDetailPage({
           </Link>
         ) : null}
         <h1 className="mt-2 text-xl font-semibold text-neutral-900">{task.title}</h1>
-        <p className="text-sm text-neutral-500">{POST_TYPE_LABELS[task.post_type]}</p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="text-sm text-neutral-500">{POST_TYPE_LABELS[task.post_type]}</span>
+          <StatusBadge status={task.status} label={PRODUCTION_TASK_STATUS_LABELS[task.status]} />
+          {materialWaitDays !== null && materialWaitLevel !== "none" ? (
+            <>
+              <UrgencyBadge level={materialWaitLevel === "urgent" ? "urgent" : "warning"} />
+              <span className="text-xs text-neutral-500">{materialWaitDays}日経過</span>
+            </>
+          ) : null}
+        </div>
+        <p className="mt-1 text-xs text-neutral-500">投稿予定日: {task.scheduled_post_date ?? "未定"}</p>
       </div>
 
       {saved ? (
-        <p className="rounded-md bg-green-50 px-4 py-2 text-sm text-green-700">更新しました。</p>
+        <p className="rounded-2xl bg-[var(--accent-soft-bg)] px-4 py-2 text-sm text-[var(--accent-soft-text)]">
+          更新しました。
+        </p>
       ) : null}
-      {error ? (
-        <p className="rounded-md bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>
-      ) : null}
+      {error ? <p className="rounded-2xl bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p> : null}
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
-        <dl className="grid grid-cols-2 gap-4 text-sm">
+      {/* 次にやる操作 */}
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-xs font-semibold text-neutral-500">次にやる操作</h2>
+        {task.status === "posting_waiting" && client ? (
+          <Link
+            href={`/clients/${client.id}/post-records/new?type=${task.post_type}&taskId=${task.id}`}
+            className="block w-full rounded-full bg-[var(--accent)] px-4 py-3.5 text-center text-base font-semibold text-white hover:bg-[var(--accent-strong)]"
+          >
+            投稿実績を登録する
+          </Link>
+        ) : task.status === "production_waiting" ? (
+          <form action={startProductionAction}>
+            <input type="hidden" name="taskId" value={taskId} />
+            <button
+              type="submit"
+              className="w-full rounded-full bg-[var(--accent)] px-4 py-3.5 text-base font-semibold text-white hover:bg-[var(--accent-strong)]"
+            >
+              制作を開始する（制作中にする）
+            </button>
+          </form>
+        ) : task.status === "in_production" ? (
+          <p className="text-sm text-neutral-600">
+            制作物ができたら、下の「Wチェック」欄からWチェックを登録してください。
+          </p>
+        ) : task.status === "wcheck_waiting" ? (
+          <p className="text-sm text-neutral-600">Wチェック待ちです。下の「Wチェック」欄で対応してください。</p>
+        ) : task.status === "client_confirmation_waiting" ? (
+          <p className="text-sm text-neutral-600">
+            {pendingConfirmation
+              ? "顧客からの回答待ちです。下の「顧客確認」欄で対応してください。"
+              : "顧客へ確認を依頼し、下の「顧客確認」欄で「顧客確認依頼済みにする」を押してください。"}
+          </p>
+        ) : task.status === "material_waiting" ? (
+          <p className="text-sm text-neutral-600">
+            素材待ち中です。素材が届いたら、下の「素材待ちへの変更」欄で状態を解除してください。
+          </p>
+        ) : (
+          <p className="text-sm text-neutral-400">現在、対応が必要な操作はありません。</p>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-xs font-semibold text-neutral-500">タスク詳細</h2>
+        <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+          <InfoRow label="持越し" value={task.is_carryover ? "はい" : "いいえ"} />
+          <InfoRow label="制作開始予定" value={task.production_start_date ?? "—"} />
           <div>
-            <dt className="text-xs text-neutral-400">状態</dt>
-            <dd className="flex items-center gap-2 text-neutral-900">
-              {PRODUCTION_TASK_STATUS_LABELS[task.status]}
-              {materialWaitDays !== null ? (
-                <span className={`rounded-full px-2 py-0.5 text-xs ${badgeClass}`}>
-                  素材待ち{materialWaitDays}日経過
-                </span>
-              ) : null}
+            <dt className="text-xs text-neutral-400">Wチェック期限</dt>
+            <dd className="flex items-center gap-1.5 text-neutral-900">
+              {task.wcheck_due_date ?? "—"}
+              {wcheckDueUrgency ? <UrgencyBadge level={wcheckDueUrgency} /> : null}
             </dd>
           </div>
-          <InfoRow label="持越し" value={task.is_carryover ? "はい" : "いいえ"} />
-          <InfoRow label="投稿予定日" value={task.scheduled_post_date ?? "—"} />
-          <InfoRow label="制作開始予定" value={task.production_start_date ?? "—"} />
-          <InfoRow label="Wチェック期限" value={task.wcheck_due_date ?? "—"} />
           <InfoRow label="顧客確認期限" value={task.client_confirm_due_date ?? "—"} />
           <InfoRow
             label="担当"
-            value={
-              task.assignee_staff_id ? staffNameById.get(task.assignee_staff_id) ?? "不明" : "未割当"
-            }
+            value={task.assignee_staff_id ? staffNameById.get(task.assignee_staff_id) ?? "不明" : "未割当"}
           />
           <InfoRow
             label="副担当"
@@ -146,29 +193,8 @@ export default async function TaskDetailPage({
         </dl>
       </section>
 
-      {task.status === "posting_waiting" && client ? (
-        <Link
-          href={`/clients/${client.id}/post-records/new?type=${task.post_type}&taskId=${task.id}`}
-          className="w-full rounded-md bg-green-600 px-4 py-4 text-center text-base font-medium text-white"
-        >
-          投稿実績を登録する
-        </Link>
-      ) : null}
-
-      {task.status === "production_waiting" ? (
-        <form action={startProductionAction}>
-          <input type="hidden" name="taskId" value={taskId} />
-          <button
-            type="submit"
-            className="w-full rounded-md bg-neutral-900 px-4 py-4 text-base font-medium text-white"
-          >
-            制作を開始する（制作中にする）
-          </button>
-        </form>
-      ) : null}
-
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
-        <h2 className="mb-3 text-sm font-semibold text-neutral-700">素材待ちへの変更</h2>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-xs font-semibold text-neutral-500">素材待ちへの変更</h2>
         {canSetMaterialWaiting ? (
           <form action={setTaskMaterialWaitingAction} className="flex flex-col gap-2">
             <input type="hidden" name="taskId" value={taskId} />
@@ -177,7 +203,7 @@ export default async function TaskDetailPage({
             </p>
             <button
               type="submit"
-              className="w-full rounded-md border border-yellow-400 bg-yellow-50 px-4 py-2 text-sm font-medium text-yellow-800"
+              className="w-full rounded-full border border-orange-300 bg-orange-50 px-4 py-2.5 text-sm font-medium text-orange-800"
             >
               素材待ちにする
             </button>
@@ -193,7 +219,7 @@ export default async function TaskDetailPage({
                 type="submit"
                 name="nextStatus"
                 value="production_waiting"
-                className="flex-1 rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+                className="flex-1 rounded-full border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-700"
               >
                 制作待ちに戻す
               </button>
@@ -201,7 +227,7 @@ export default async function TaskDetailPage({
                 type="submit"
                 name="nextStatus"
                 value="in_production"
-                className="flex-1 rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+                className="flex-1 rounded-full border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-700"
               >
                 制作中にする
               </button>
@@ -214,16 +240,41 @@ export default async function TaskDetailPage({
         )}
       </section>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
-        <h2 className="mb-3 text-sm font-semibold text-neutral-700">Wチェック</h2>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-xs font-semibold text-neutral-500">この顧客の素材一覧</h2>
+        <ul className="flex flex-col gap-2 text-sm">
+          {materialSubmissions.map(({ submission, files }) => (
+            <li key={submission.id} className="rounded-xl border border-neutral-200 px-3.5 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">
+                  {submission.title}
+                  <span className="ml-2 text-xs text-neutral-400">{files.length}ファイル</span>
+                </span>
+                <span className="text-xs text-neutral-400">
+                  {new Date(submission.received_at).toLocaleDateString("ja-JP")} 受領
+                </span>
+              </div>
+              {submission.post_usage ? (
+                <p className="text-xs text-neutral-500">用途: {postUsageLabel(submission.post_usage)}</p>
+              ) : null}
+            </li>
+          ))}
+          {materialSubmissions.length === 0 ? (
+            <li className="text-neutral-400">この顧客の素材はまだ登録されていません。</li>
+          ) : null}
+        </ul>
+      </section>
 
-        <div className="mb-4 rounded-md bg-purple-50 px-3 py-2 text-xs text-purple-800">
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-xs font-semibold text-neutral-500">Wチェック</h2>
+
+        <div className="mb-4 rounded-2xl bg-purple-50 px-3.5 py-2.5 text-xs text-purple-800">
           チェック基準: {WCHECK_CRITERIA.join(" / ")}
         </div>
 
         {pendingWCheck ? (
           <div className="flex flex-col gap-3">
-            <dl className="grid grid-cols-2 gap-3 text-sm">
+            <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <InfoRow label="依頼日時" value={new Date(pendingWCheck.requested_at).toLocaleString("ja-JP")} />
               <InfoRow
                 label="制作担当"
@@ -237,42 +288,36 @@ export default async function TaskDetailPage({
                     : "指定なし（誰でも可）"
                 }
               />
-              <InfoRow label={WCHECK_ASSET_TYPE_LABELS[pendingWCheck.asset_type]} value={pendingWCheck.asset_url} />
             </dl>
-            {pendingWCheck.reviewer_staff_id ? (
-              <p className="w-fit rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-800">
-                指定担当: {staffNameById.get(pendingWCheck.reviewer_staff_id) ?? "不明"}
-              </p>
-            ) : null}
             <a
               href={pendingWCheck.asset_url}
               target="_blank"
               rel="noreferrer"
-              className="w-full rounded-md border border-neutral-300 px-4 py-3 text-center text-sm font-medium text-neutral-700"
+              className="inline-flex w-fit items-center gap-1.5 rounded-full border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-700"
             >
-              制作物を開く
+              {pendingWCheck.asset_type === "drive_video" ? "動画を開く" : "Canvaを開く"}
             </a>
             {pendingWCheck.notes ? (
               <p className="text-xs text-neutral-500">補足: {pendingWCheck.notes}</p>
             ) : null}
 
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 border-t border-neutral-100 pt-3 sm:grid-cols-2">
               <form action={approveWCheckAction}>
                 <input type="hidden" name="wcheckId" value={pendingWCheck.id} />
                 <input type="hidden" name="taskId" value={taskId} />
                 <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
                 <button
                   type="submit"
-                  className="w-full rounded-md bg-green-600 px-4 py-3 text-sm font-medium text-white"
+                  className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
                 >
-                  OK
+                  確認する（OK）
                 </button>
               </form>
-              <details className="rounded-md border border-neutral-300">
-                <summary className="cursor-pointer px-4 py-3 text-center text-sm font-medium text-red-700">
+              <details className="rounded-full">
+                <summary className="cursor-pointer rounded-full border border-neutral-300 px-4 py-3 text-center text-sm font-medium text-neutral-500">
                   修正依頼
                 </summary>
-                <form action={requestWCheckRevisionAction} className="flex flex-col gap-2 p-3 pt-0">
+                <form action={requestWCheckRevisionAction} className="mt-2 flex flex-col gap-2 rounded-2xl bg-neutral-50 p-3">
                   <input type="hidden" name="wcheckId" value={pendingWCheck.id} />
                   <input type="hidden" name="taskId" value={taskId} />
                   <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
@@ -285,7 +330,7 @@ export default async function TaskDetailPage({
                   />
                   <button
                     type="submit"
-                    className="w-full rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white"
+                    className="w-full rounded-full border border-red-300 px-4 py-2 text-sm font-medium text-red-700"
                   >
                     修正依頼を送る
                   </button>
@@ -294,53 +339,80 @@ export default async function TaskDetailPage({
             </div>
           </div>
         ) : (
-          <form action={registerWCheckAction} className="flex flex-col gap-3">
-            <input type="hidden" name="taskId" value={taskId} />
-            <label className="text-sm font-medium text-neutral-700">
-              {WCHECK_ASSET_TYPE_LABELS[assetTypeForPostType(task.post_type)]}
-              <input
-                name="assetUrl"
-                type="url"
-                required
-                defaultValue={assetUrl ?? ""}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
-              />
-              {assetUrl ? (
-                <span className="mt-1 block text-xs text-neutral-400">
-                  外注納品物のリンクを入力済みです。必要に応じて変更してください。
-                </span>
-              ) : null}
-            </label>
-            <label className="text-sm font-medium text-neutral-700">
-              Wチェック担当（任意）
-              <select
-                name="reviewerStaffId"
-                defaultValue=""
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+          <>
+            <form action={registerWCheckAction} className="flex flex-col gap-3">
+              <input type="hidden" name="taskId" value={taskId} />
+              <label className="text-sm font-medium text-neutral-700">
+                {WCHECK_ASSET_TYPE_LABELS[assetTypeForPostType(task.post_type)]}
+                <input
+                  name="assetUrl"
+                  type="url"
+                  required
+                  defaultValue={assetUrl ?? ""}
+                  className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                />
+                {assetUrl ? (
+                  <span className="mt-1 block text-xs text-neutral-400">
+                    外注納品物のリンクを入力済みです。必要に応じて変更してください。
+                  </span>
+                ) : null}
+              </label>
+              <label className="text-sm font-medium text-neutral-700">
+                Wチェック担当（任意）
+                <select
+                  name="reviewerStaffId"
+                  defaultValue=""
+                  className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                >
+                  <option value="">指定なし（誰でも可）</option>
+                  {staffOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.last_name} {s.first_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-medium text-neutral-700">
+                補足
+                <textarea
+                  name="notes"
+                  rows={2}
+                  className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                />
+              </label>
+              <button
+                type="submit"
+                className="mt-1 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
               >
-                <option value="">指定なし（誰でも可）</option>
-                {staffOptions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.last_name} {s.first_name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm font-medium text-neutral-700">
-              補足
-              <textarea
-                name="notes"
-                rows={2}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
-              />
-            </label>
-            <button
-              type="submit"
-              className="mt-1 w-full rounded-md bg-neutral-900 px-4 py-3 text-sm font-medium text-white"
-            >
-              Wチェック登録
-            </button>
-          </form>
+                Wチェック登録
+              </button>
+            </form>
+
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs text-neutral-400 underline">
+                Wチェックを省略して顧客確認へ
+              </summary>
+              <form action={skipWCheckAction} className="mt-2 flex flex-col gap-2 rounded-2xl bg-neutral-50 p-3.5">
+                <input type="hidden" name="taskId" value={taskId} />
+                <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
+                <p className="text-xs text-neutral-500">
+                  Wチェックを行わず、このタスクを直接「顧客確認待ち」へ進めます。この操作は記録に残ります。
+                </p>
+                <textarea
+                  name="reason"
+                  rows={2}
+                  placeholder="理由（任意）"
+                  className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
+                />
+                <ConfirmSubmitButton
+                  confirmMessage="このタスクはWチェックを行わず顧客確認へ進みます。よろしいですか？"
+                  className="self-start rounded-full border border-neutral-300 px-3.5 py-2 text-xs text-neutral-600"
+                >
+                  Wチェックを省略して顧客確認へ進める
+                </ConfirmSubmitButton>
+              </form>
+            </details>
+          </>
         )}
 
         {wCheckHistory.length > 0 ? (
@@ -359,20 +431,19 @@ export default async function TaskDetailPage({
         ) : null}
       </section>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
-        <h2 className="mb-3 text-sm font-semibold text-neutral-700">顧客確認</h2>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-xs font-semibold text-neutral-500">顧客確認</h2>
 
         {pendingConfirmation ? (
           <div className="flex flex-col gap-3">
-            <dl className="grid grid-cols-2 gap-3 text-sm">
+            <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div>
                 <dt className="text-xs text-neutral-400">確認依頼日</dt>
-                <dd className="flex items-center gap-2 text-neutral-900">
+                <dd className="flex flex-wrap items-center gap-1.5 text-neutral-900">
                   {new Date(pendingConfirmation.requested_at).toLocaleString("ja-JP")}
+                  {confirmationLevel !== "none" ? <UrgencyBadge level={confirmationLevel} /> : null}
                   {confirmationDays !== null ? (
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${confirmationBadgeClass}`}>
-                      {confirmationDays}日経過
-                    </span>
+                    <span className="text-xs text-neutral-500">{confirmationDays}日経過</span>
                   ) : null}
                 </dd>
               </div>
@@ -387,31 +458,31 @@ export default async function TaskDetailPage({
                 href={lineLink.url}
                 target="_blank"
                 rel="noreferrer"
-                className="w-full rounded-md border border-green-400 bg-green-50 px-4 py-3 text-center text-sm font-medium text-green-800"
+                className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--accent)] bg-[var(--accent-soft-bg)] px-4 py-2.5 text-sm font-medium text-[var(--accent-soft-text)]"
               >
                 公式LINEを開く
               </a>
             ) : null}
 
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 border-t border-neutral-100 pt-3 sm:grid-cols-2">
               <form action={approveClientConfirmationAction}>
                 <input type="hidden" name="confirmationId" value={pendingConfirmation.id} />
                 <input type="hidden" name="taskId" value={taskId} />
                 <input type="hidden" name="returnTo" value={`/tasks/${taskId}`} />
                 <button
                   type="submit"
-                  className="w-full rounded-md bg-green-600 px-4 py-3 text-sm font-medium text-white"
+                  className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
                 >
                   顧客OK
                 </button>
               </form>
-              <details className="rounded-md border border-neutral-300">
-                <summary className="cursor-pointer px-4 py-3 text-center text-sm font-medium text-red-700">
+              <details className="rounded-full">
+                <summary className="cursor-pointer rounded-full border border-neutral-300 px-4 py-3 text-center text-sm font-medium text-neutral-500">
                   修正依頼
                 </summary>
                 <form
                   action={requestClientConfirmationRevisionAction}
-                  className="flex flex-col gap-2 p-3 pt-0"
+                  className="mt-2 flex flex-col gap-2 rounded-2xl bg-neutral-50 p-3"
                 >
                   <input type="hidden" name="confirmationId" value={pendingConfirmation.id} />
                   <input type="hidden" name="taskId" value={taskId} />
@@ -425,7 +496,7 @@ export default async function TaskDetailPage({
                   />
                   <button
                     type="submit"
-                    className="w-full rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white"
+                    className="w-full rounded-full border border-red-300 px-4 py-2 text-sm font-medium text-red-700"
                   >
                     修正依頼を記録
                   </button>
@@ -445,14 +516,14 @@ export default async function TaskDetailPage({
                 href={lineLink.url}
                 target="_blank"
                 rel="noreferrer"
-                className="w-full rounded-md border border-green-400 bg-green-50 px-4 py-3 text-center text-sm font-medium text-green-800"
+                className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--accent)] bg-[var(--accent-soft-bg)] px-4 py-2.5 text-sm font-medium text-[var(--accent-soft-text)]"
               >
                 公式LINEを開く
               </a>
             ) : null}
             <button
               type="submit"
-              className="w-full rounded-md bg-neutral-900 px-4 py-3 text-sm font-medium text-white"
+              className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
             >
               顧客確認依頼済みにする
             </button>
@@ -479,27 +550,7 @@ export default async function TaskDetailPage({
           </div>
         ) : null}
       </section>
-
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
-        <h2 className="mb-3 text-sm font-semibold text-neutral-700">この顧客の素材一覧</h2>
-        <ul className="flex flex-col gap-2 text-sm">
-          {materials.map((m) => (
-            <li key={m.id} className="rounded-md border border-neutral-200 px-3 py-2">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{m.title}</span>
-                <span className="text-xs text-neutral-400">
-                  {new Date(m.received_at).toLocaleDateString("ja-JP")} 受領
-                </span>
-              </div>
-              {m.post_usage ? <p className="text-xs text-neutral-500">用途: {m.post_usage}</p> : null}
-            </li>
-          ))}
-          {materials.length === 0 ? (
-            <li className="text-neutral-400">この顧客の素材はまだ登録されていません。</li>
-          ) : null}
-        </ul>
-      </section>
-    </main>
+    </PageContainer>
   );
 }
 

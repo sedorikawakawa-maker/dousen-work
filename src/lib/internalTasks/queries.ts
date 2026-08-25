@@ -10,8 +10,21 @@ import type {
 type TypedClient = SupabaseClient<Database>;
 type InternalTaskRow = Database["public"]["Tables"]["internal_tasks"]["Row"];
 
+/**
+ * 「今日」は日本時間の暦日で判定する。サーバーの実行環境がUTCの場合、
+ * 単純なnew Date().toISOString().slice(0,10)ではJST 0:00〜8:59の間
+ * 前日の日付になってしまい、「今日期限」のタスクが期限当日の朝に
+ * 表示されないというズレが生じるため、Asia/Tokyoで明示的に計算する。
+ */
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const lookup = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day}`;
 }
 
 /** 期限超過 → 今日 → 優先度A → その他 の順に並べ替える。 */
@@ -77,22 +90,22 @@ export async function getInternalTask(supabase: TypedClient, id: string) {
   return data;
 }
 
-/** 担当者ダッシュボード「今日の社内タスク」向け: 自分の担当分で今日締切または期限超過、未完了のもの。 */
-export async function listTodayInternalTasksForStaff(
+/**
+ * ダッシュボード向け: 自分の担当分で未完了の社内タスク全件（期限の有無・遠近を問わない）。
+ * 「今日やること」への採用可否、および担当社内タスク一覧への表示は呼び出し側（todayActions.ts）で判定する。
+ */
+export async function listMyIncompleteInternalTasks(
   supabase: TypedClient,
   staffId: string,
 ): Promise<InternalTaskRow[]> {
-  const today = todayIso();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("internal_tasks")
     .select("*")
     .eq("assignee_staff_id", staffId)
-    .neq("status", "done")
-    .not("due_at", "is", null)
-    .lte("due_at", `${today}T23:59:59.999Z`)
-    .order("due_at", { ascending: true });
+    .neq("status", "done");
+  if (error) throw error;
 
-  return data ?? [];
+  return sortInternalTasks(data ?? []);
 }
 
 export async function countOverdueInternalTasks(supabase: TypedClient): Promise<number> {

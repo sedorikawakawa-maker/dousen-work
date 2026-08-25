@@ -7,10 +7,14 @@ import { canViewFinance } from "@/lib/auth/roles";
 import { getClientDetail, listActiveStaff } from "@/lib/clients/queries";
 import {
   ASSIGNMENT_TYPE_LABELS,
+  CONTACT_METHOD_OPTIONS,
   CONTRACT_STATUS_OPTIONS,
+  INDUSTRY_OPTIONS,
+  INFLOW_CHANNEL_OPTIONS,
   LINK_TYPE_OPTIONS,
   POST_TYPE_LABELS,
   POST_TYPE_OPTIONS,
+  SERVICE_OPTIONS,
 } from "@/lib/clients/labels";
 import { WEEKDAY_LABELS, isWeekdayRule, type WeekdayRule } from "@/lib/scheduling/weekdayRule";
 import type { Database, PostType } from "@/lib/supabase/database.types";
@@ -27,6 +31,7 @@ import {
   updateOperationProfileAction,
   updateReminderSettingAction,
 } from "../actions";
+import { PageContainer } from "@/components/PageContainer";
 
 type ScheduleRuleRow = Database["public"]["Tables"]["posting_schedule_rules"]["Row"];
 
@@ -75,7 +80,7 @@ export default async function ClientEditPage({
   );
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 px-4 py-8">
+    <PageContainer className="max-w-3xl gap-6 bg-neutral-50 py-8">
       <div>
         <Link href={`/clients/${id}`} className="text-sm text-neutral-500">
           ← 顧客詳細に戻る
@@ -86,12 +91,12 @@ export default async function ClientEditPage({
       </div>
 
       {saved ? (
-        <p className="rounded-md bg-green-50 px-4 py-2 text-sm text-green-700">
+        <p className="rounded-2xl bg-[var(--accent-soft-bg)] px-4 py-2.5 text-sm text-[var(--accent-soft-text)]">
           {SECTION_TITLES[saved] ?? saved} を保存しました。
         </p>
       ) : null}
       {error ? (
-        <p className="rounded-md bg-red-50 px-4 py-2 text-sm text-red-700">
+        <p className="rounded-2xl bg-red-50 px-4 py-2.5 text-sm text-red-700">
           {SECTION_TITLES[section ?? ""] ?? ""} の保存に失敗しました: {error}
         </p>
       ) : null}
@@ -102,25 +107,54 @@ export default async function ClientEditPage({
           <input type="hidden" name="clientId" value={id} />
           <Field label="顧客名（会社名・屋号）" name="companyName" defaultValue={client.company_name} required />
           <Field label="店舗名" name="shopName" defaultValue={client.shop_name ?? ""} />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="電話番号" name="phone" defaultValue={client.phone ?? ""} />
             <Field label="メールアドレス" name="email" defaultValue={client.email ?? ""} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="担当者名（先方）" name="contactName" defaultValue={client.contact_name ?? ""} />
-            <Field label="業種" name="industry" defaultValue={client.industry ?? ""} />
+            <SelectFieldWithFallback label="業種" name="industry" options={INDUSTRY_OPTIONS} value={client.industry} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="流入経路" name="inflowChannel" defaultValue={client.inflow_channel ?? ""} />
-            <Field label="連絡手段" name="contactMethod" defaultValue={client.contact_method ?? ""} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <SelectFieldWithFallback
+              label="流入経路"
+              name="inflowChannel"
+              options={INFLOW_CHANNEL_OPTIONS}
+              value={client.inflow_channel}
+            />
+            <SelectFieldWithFallback
+              label="連絡手段"
+              name="contactMethod"
+              options={CONTACT_METHOD_OPTIONS}
+              value={client.contact_method}
+            />
           </div>
+
+          <fieldset>
+            <legend className="text-sm font-medium text-neutral-700">提供サービス（複数選択可）</legend>
+            <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+              {SERVICE_OPTIONS.map((service) => (
+                <label key={service} className="flex items-center gap-1.5 text-sm text-neutral-700">
+                  <input
+                    type="checkbox"
+                    name="services"
+                    value={service}
+                    defaultChecked={client.services.includes(service)}
+                    className="h-4 w-4 rounded border-neutral-300"
+                  />
+                  {service}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
           <label className="text-sm font-medium text-neutral-700">
             備考
             <textarea
               name="notes"
               rows={3}
               defaultValue={client.notes ?? ""}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
             />
           </label>
           <SaveButton />
@@ -136,7 +170,7 @@ export default async function ClientEditPage({
             <select
               name="contractStatus"
               defaultValue={client.contract_status}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
             >
               {CONTRACT_STATUS_OPTIONS.map(([value, label]) => (
                 <option key={value} value={value}>
@@ -145,7 +179,7 @@ export default async function ClientEditPage({
               ))}
             </select>
           </label>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="契約開始日"
               name="contractStartDate"
@@ -160,7 +194,7 @@ export default async function ClientEditPage({
             />
           </div>
           {financeVisible ? (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field
                 label="売上"
                 name="revenueAmount"
@@ -175,7 +209,7 @@ export default async function ClientEditPage({
               />
             </div>
           ) : (
-            <p className="text-xs text-neutral-400">
+            <p className="text-xs text-neutral-500">
               料金・売上はパート権限では表示・編集できません。
             </p>
           )}
@@ -186,7 +220,7 @@ export default async function ClientEditPage({
       {/* 主担当・副担当 */}
       <Section title="主担当・副担当">
         <div className="flex flex-col gap-6">
-          <form action={updateAssignmentAction} className="flex items-end gap-3">
+          <form action={updateAssignmentAction} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="clientId" value={id} />
             <input type="hidden" name="assignmentType" value="primary" />
             <label className="flex-1 text-sm font-medium text-neutral-700">
@@ -194,7 +228,7 @@ export default async function ClientEditPage({
               <select
                 name="staffId"
                 defaultValue={primaryAssignment?.staff_id ?? ""}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
               >
                 <option value="">未設定</option>
                 {staffOptions.map((s) => (
@@ -207,7 +241,7 @@ export default async function ClientEditPage({
             <SaveButton />
           </form>
 
-          <form action={updateAssignmentAction} className="flex items-end gap-3">
+          <form action={updateAssignmentAction} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="clientId" value={id} />
             <input type="hidden" name="assignmentType" value="secondary" />
             <label className="flex-1 text-sm font-medium text-neutral-700">
@@ -215,7 +249,7 @@ export default async function ClientEditPage({
               <select
                 name="staffId"
                 defaultValue={secondaryAssignment?.staff_id ?? ""}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
               >
                 <option value="">未設定</option>
                 {staffOptions.map((s) => (
@@ -245,7 +279,7 @@ export default async function ClientEditPage({
             name="contentDirection"
             defaultValue={detail.profile?.content_direction ?? ""}
           />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="トーン" name="tone" defaultValue={detail.profile?.tone ?? ""} />
             <Field
               label="CTA方針"
@@ -259,7 +293,7 @@ export default async function ClientEditPage({
               name="ngNotes"
               rows={2}
               defaultValue={detail.profile?.ng_notes ?? ""}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
             />
           </label>
           <Field
@@ -289,7 +323,7 @@ export default async function ClientEditPage({
             すでに制作着手済み・Wチェック以降・素材待ち・手動で日付変更したタスクは変更されません。
           </p>
           {!primaryAssignment ? (
-            <p className="rounded-md bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
+            <p className="rounded-2xl bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
               ⚠ 主担当が未設定です。生成される制作タスクの担当者は「未割当」になります。
             </p>
           ) : null}
@@ -323,7 +357,7 @@ export default async function ClientEditPage({
               {detail.links.map((link) => (
                 <li
                   key={link.id}
-                  className="flex items-center justify-between gap-3 rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 px-3.5 py-3 text-sm"
                 >
                   <span className="truncate">
                     <strong>{link.label || link.link_type}</strong>: {link.url}
@@ -344,12 +378,12 @@ export default async function ClientEditPage({
 
           <form action={addClientLinkAction} className="flex flex-col gap-3 border-t border-neutral-100 pt-4">
             <input type="hidden" name="clientId" value={id} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <label className="text-sm font-medium text-neutral-700">
                 種別
                 <select
                   name="linkType"
-                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+                  className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
                 >
                   {LINK_TYPE_OPTIONS.map(([value, label]) => (
                     <option key={value} value={value}>
@@ -363,7 +397,7 @@ export default async function ClientEditPage({
             <Field label="URL" name="url" required />
             <button
               type="submit"
-              className="mt-1 w-full rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+              className="mt-1 w-full rounded-full border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-700"
             >
               リンクを追加
             </button>
@@ -374,7 +408,7 @@ export default async function ClientEditPage({
       {/* ログインID・パスワード保管先 */}
       <Section title="ログインID・パスワード保管先">
         <div className="flex flex-col gap-4">
-          <p className="rounded-md bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
+          <p className="rounded-2xl bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
             SNSパスワードそのものはここに入力しないでください。1Password等の外部保管先URLのみ登録します。
           </p>
           {detail.credentials.length > 0 ? (
@@ -382,7 +416,7 @@ export default async function ClientEditPage({
               {detail.credentials.map((credential) => (
                 <li
                   key={credential.id}
-                  className="flex items-center justify-between gap-3 rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 px-3.5 py-3 text-sm"
                 >
                   <span className="truncate">
                     <strong>{credential.service_name}</strong>
@@ -409,14 +443,14 @@ export default async function ClientEditPage({
           >
             <input type="hidden" name="clientId" value={id} />
             <Field label="サービス名" name="serviceName" required />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="ログインID" name="loginId" />
               <Field label="パスワード保管先URL" name="passwordVaultUrl" />
             </div>
             <Field label="補足" name="notes" />
             <button
               type="submit"
-              className="mt-1 w-full rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+              className="mt-1 w-full rounded-full border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-700"
             >
               追加
             </button>
@@ -446,13 +480,13 @@ export default async function ClientEditPage({
             />
             顧客確認待ちの自動催促対象にする（14日以上で催促対象）
           </label>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-neutral-500">
             通知先は主担当・副担当および管理者権限のスタッフです。個別の通知先指定は現時点では未対応です。
           </p>
           <SaveButton />
         </form>
       </Section>
-    </main>
+    </PageContainer>
   );
 }
 
@@ -473,7 +507,7 @@ function ScheduleRuleForm({
   return (
     <form
       action={saveScheduleRuleAction}
-      className="flex flex-col gap-3 rounded-md border border-neutral-200 p-4"
+      className="flex flex-col gap-3 rounded-2xl border border-neutral-200 p-4 sm:p-5"
     >
       <input type="hidden" name="clientId" value={clientId} />
       <input type="hidden" name="postType" value={postType} />
@@ -491,7 +525,7 @@ function ScheduleRuleForm({
         defaultValue={String(rule?.monthly_target ?? 4)}
       />
 
-      <fieldset className="flex flex-col gap-2 rounded-md border border-neutral-100 p-3">
+      <fieldset className="flex flex-col gap-2 rounded-2xl border border-neutral-100 p-3.5">
         <legend className="px-1 text-xs font-medium text-neutral-500">曜日ルール</legend>
 
         <label className="flex items-center gap-2 text-sm text-neutral-700">
@@ -529,7 +563,7 @@ function ScheduleRuleForm({
                 <select
                   name={`nthRow${i}Nth`}
                   defaultValue={existing ? String(existing.nth) : ""}
-                  className="rounded-md border border-neutral-300 px-2 py-1"
+                  className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
                 >
                   <option value="">未使用</option>
                   {[1, 2, 3, 4, 5].map((n) => (
@@ -541,7 +575,7 @@ function ScheduleRuleForm({
                 <select
                   name={`nthRow${i}Weekday`}
                   defaultValue={existing ? String(existing.weekday) : ""}
-                  className="rounded-md border border-neutral-300 px-2 py-1"
+                  className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
                 >
                   <option value="">曜日</option>
                   {WEEKDAY_LABELS.map((label, weekday) => (
@@ -556,7 +590,7 @@ function ScheduleRuleForm({
         </div>
       </fieldset>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field
           label="制作開始: 投稿の◯日前"
           name="productionLeadDays"
@@ -597,7 +631,7 @@ function ScheduleRuleForm({
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white p-6">
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
       <h2 className="mb-4 text-sm font-semibold text-neutral-700">{title}</h2>
       {children}
     </section>
@@ -608,10 +642,48 @@ function SaveButton() {
   return (
     <button
       type="submit"
-      className="mt-1 w-full rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+      className="mt-1 w-full rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--accent-strong)] sm:w-auto sm:px-6"
     >
       保存
     </button>
+  );
+}
+
+/**
+ * 業種/流入経路/連絡手段は自由入力からプルダウンへ変更するが、DB列は既存どおりtextのまま。
+ * 過去の自由入力値が選択肢一覧に無い場合でも消えないよう、その値を選択肢へ追加して表示する。
+ */
+function SelectFieldWithFallback({
+  label,
+  name,
+  options,
+  value,
+}: {
+  label: string;
+  name: string;
+  options: readonly string[];
+  value: string | null;
+}) {
+  const hasLegacyValue = !!value && !options.includes(value);
+  return (
+    <label className="text-sm font-medium text-neutral-700">
+      {label}
+      <select
+        name={name}
+        defaultValue={value ?? ""}
+        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+      >
+        <option value="">未選択</option>
+        {hasLegacyValue ? (
+          <option value={value ?? ""}>{value}（既存の入力）</option>
+        ) : null}
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -642,7 +714,7 @@ function Field({
         defaultValue={defaultValue}
         min={min}
         max={max}
-        className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
       />
     </label>
   );

@@ -57,7 +57,7 @@ export async function registerPostRecordAction(formData: FormData) {
     // Google Driveへの格納に失敗した場合はここで処理を中断し、
     // post_records・production_tasks.completedのどちらも確定させない。
     try {
-      const drive = getDriveService();
+      const drive = await getDriveService();
       const result = await drive.uploadFile({ file, clientId, folderHint: "final" });
       finalDriveFileId = result.driveFileId;
       finalDriveUrl = result.driveUrl;

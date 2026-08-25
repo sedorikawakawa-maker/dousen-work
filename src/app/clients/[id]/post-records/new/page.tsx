@@ -3,13 +3,14 @@ import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { listActiveStaff } from "@/lib/clients/queries";
-import { listMaterialsForClient } from "@/lib/materials/queries";
+import { listMaterialOptionsForClient } from "@/lib/materials/queries";
 import { listCandidateTasksForPostRecord } from "@/lib/postRecords/queries";
 import { POST_TYPE_LABELS, POST_TYPE_OPTIONS, PRODUCTION_TASK_STATUS_LABELS } from "@/lib/clients/labels";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { SubmitButton } from "@/components/SubmitButton";
 import type { PostType } from "@/lib/supabase/database.types";
 import { registerPostRecordAction } from "./actions";
+import { PageContainer } from "@/components/PageContainer";
 
 export default async function NewPostRecordPage({
   params,
@@ -27,11 +28,11 @@ export default async function NewPostRecordPage({
   const staff = await getCurrentStaff();
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: client }, candidateTasks, staffOptions, materials] = await Promise.all([
+  const [{ data: client }, candidateTasks, staffOptions, materialOptions] = await Promise.all([
     supabase.from("clients_view").select("id, company_name, shop_name").eq("id", id).maybeSingle(),
     listCandidateTasksForPostRecord(supabase, id, postType),
     listActiveStaff(supabase),
-    listMaterialsForClient(supabase, id),
+    listMaterialOptionsForClient(supabase, id),
   ]);
 
   if (!client) {
@@ -41,7 +42,7 @@ export default async function NewPostRecordPage({
   const selectedTaskId = taskId && candidateTasks.some((t) => t.id === taskId) ? taskId : "";
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col gap-6 px-4 py-6 sm:py-8">
+    <PageContainer className="max-w-xl gap-6 bg-neutral-50 py-6 sm:py-8">
       <div>
         <Link href={`/clients/${id}?tab=posts`} className="text-sm text-neutral-500">
           ← {client.company_name} の投稿履歴に戻る
@@ -49,15 +50,13 @@ export default async function NewPostRecordPage({
         <h1 className="mt-2 text-xl font-semibold text-neutral-900">投稿実績登録</h1>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 rounded-2xl bg-neutral-100 p-1">
         {POST_TYPE_OPTIONS.map(([value, label]) => (
           <Link
             key={value}
             href={`/clients/${id}/post-records/new?type=${value}`}
-            className={`flex-1 rounded-md border px-4 py-3 text-center text-sm font-medium ${
-              postType === value
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-300 text-neutral-700"
+            className={`flex-1 rounded-xl px-4 py-3 text-center text-sm font-semibold ${
+              postType === value ? "bg-white text-[var(--accent-strong)] shadow-sm" : "text-neutral-500"
             }`}
           >
             {label}
@@ -65,13 +64,11 @@ export default async function NewPostRecordPage({
         ))}
       </div>
 
-      {error ? (
-        <p className="rounded-md bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>
-      ) : null}
+      {error ? <p className="rounded-2xl bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p> : null}
 
       <form
         action={registerPostRecordAction}
-        className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-4"
+        className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6"
       >
         <input type="hidden" name="clientId" value={id} />
         <input type="hidden" name="postType" value={postType} />
@@ -82,7 +79,7 @@ export default async function NewPostRecordPage({
             name="taskId"
             required
             defaultValue={selectedTaskId}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+            className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
           >
             <option value="" disabled>
               選択してください
@@ -101,7 +98,7 @@ export default async function NewPostRecordPage({
           ) : null}
         </label>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="text-sm font-medium text-neutral-700">
             投稿日
             <input
@@ -109,7 +106,7 @@ export default async function NewPostRecordPage({
               type="date"
               required
               defaultValue={new Date().toISOString().slice(0, 10)}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
             />
           </label>
           <label className="text-sm font-medium text-neutral-700">
@@ -118,7 +115,7 @@ export default async function NewPostRecordPage({
               name="postedByStaffId"
               required
               defaultValue={staff?.id ?? ""}
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
             >
               {staffOptions.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -134,7 +131,7 @@ export default async function NewPostRecordPage({
           <textarea
             name="title"
             rows={2}
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+            className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
           />
         </label>
 
@@ -144,7 +141,7 @@ export default async function NewPostRecordPage({
             name="socialPostUrl"
             type="url"
             inputMode="url"
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+            className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
           />
         </label>
 
@@ -164,7 +161,7 @@ export default async function NewPostRecordPage({
               <input
                 name="manualDriveUrl"
                 type="url"
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
               />
             </label>
             <DriveMockNotice />
@@ -177,7 +174,7 @@ export default async function NewPostRecordPage({
             <input
               name="canvaUrl"
               type="url"
-              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
             />
           </label>
         ) : null}
@@ -189,7 +186,7 @@ export default async function NewPostRecordPage({
               <input
                 name="canvaUrl"
                 type="url"
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
               />
             </label>
             <label className="text-sm font-medium text-neutral-700">
@@ -201,7 +198,7 @@ export default async function NewPostRecordPage({
               <input
                 name="manualDriveUrl"
                 type="url"
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
               />
             </label>
             <DriveMockNotice />
@@ -213,12 +210,12 @@ export default async function NewPostRecordPage({
           <select
             name="sourceMaterialId"
             defaultValue=""
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-3 text-base"
+            className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
           >
             <option value="">選択しない</option>
-            {materials.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.title}
+            {materialOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
               </option>
             ))}
           </select>
@@ -226,11 +223,11 @@ export default async function NewPostRecordPage({
 
         <SubmitButton
           pendingText="登録中..."
-          className="mt-2 w-full rounded-md bg-neutral-900 px-4 py-4 text-base font-medium text-white"
+          className="mt-2 w-full rounded-full bg-[var(--accent)] px-4 py-4 text-base font-semibold text-white hover:bg-[var(--accent-strong)]"
         >
           登録する
         </SubmitButton>
       </form>
-    </main>
+    </PageContainer>
   );
 }

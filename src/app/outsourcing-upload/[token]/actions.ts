@@ -36,7 +36,7 @@ export async function submitOutsourcingDeliveryAction(formData: FormData) {
   const file = formData.get("file");
   if (file instanceof File && file.size > 0) {
     try {
-      const drive = getDriveService();
+      const drive = await getDriveService();
       const result = await drive.uploadFile({
         file,
         clientId: request.client_id ?? "unassigned",

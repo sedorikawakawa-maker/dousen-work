@@ -67,6 +67,17 @@ export const POST_TYPE_OPTIONS = Object.entries(POST_TYPE_LABELS) as [
   string,
 ][];
 
+/**
+ * materials.post_usage表示用。新しい素材フォームはreel/feed/story等の値を保存するが、
+ * 過去の自由記述データ（post_type以外の文字列）が残っていても壊れないようフォールバックする。
+ */
+export function postUsageLabel(value: string | null): string {
+  if (!value) return "—";
+  return POST_TYPE_LABELS[value as PostType] ?? value;
+}
+
+export const REQUESTED_POST_TIMING_OPTIONS = ["おまかせ", "今週～来週", "来週以降"] as const;
+
 export const PRODUCTION_TASK_STATUS_LABELS: Record<ProductionTaskStatus, string> = {
   material_waiting: "素材待ち",
   production_waiting: "制作待ち",
@@ -76,6 +87,65 @@ export const PRODUCTION_TASK_STATUS_LABELS: Record<ProductionTaskStatus, string>
   posting_waiting: "投稿待ち",
   completed: "完了",
 };
+
+/**
+ * 提供サービスの選択肢（設定マスタ準拠）。1顧客が複数選択できる想定でtext[]に保存する。
+ * DB側は自由なtext[]のため、この一覧に無い値（将来の追加等）が入っていても表示は壊れない。
+ */
+export const SERVICE_OPTIONS = [
+  "丸投げプラン",
+  "コンサルティング",
+  "台本制作",
+  "投稿管理",
+  "動画チェック",
+  "動画制作",
+  "撮影",
+  "編集",
+  "MEO",
+  "ブランディング支援",
+  "採用支援",
+  "Youtube出演",
+  "その他",
+] as const;
+
+/**
+ * 連絡手段/流入経路/業種は既存どおりclients.*がtext（自由入力）のままのため、
+ * 選択肢はUI側の候補一覧としてのみ定義する。過去の自由入力値が候補外でも、
+ * 各編集フォーム側でその値を選択肢へ追加表示するフォールバックを行うため消えない。
+ */
+export const CONTACT_METHOD_OPTIONS = ["LINE", "電話", "メール", "Messenger", "スラック", "チャットワーク"] as const;
+
+export const INFLOW_CHANNEL_OPTIONS = [
+  "紹介",
+  "Instagram",
+  "交流会",
+  "既存顧客からの紹介",
+  "HP・Google検索",
+  "広告",
+  "直営業・店頭",
+  "YouTube",
+  "その他",
+] as const;
+
+export const INDUSTRY_OPTIONS = [
+  "飲食",
+  "美容・サロン",
+  "医療・クリニック",
+  "福祉・介護",
+  "教育・スクール",
+  "住宅・リフォーム",
+  "建設・電気系",
+  "自動車・整備",
+  "士業",
+  "小売・物販",
+  "不動産",
+  "IT・映像",
+  "政治家",
+  "メディア・広報",
+  "その他サービス業",
+  "コーチング・コンサルティング",
+  "その他",
+] as const;
 
 export const NEXT_ACTION_BY_STATUS: Record<ClientCurrentStatus, string> = {
   on_track: "特になし",

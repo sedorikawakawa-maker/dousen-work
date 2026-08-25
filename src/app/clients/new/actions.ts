@@ -25,40 +25,32 @@ export async function registerClientAction(
 
   const contractStatus = String(formData.get("contractStatus") ?? "proposal") as ContractStatus;
   const primaryStaffId = String(formData.get("primaryStaffId") ?? "").trim();
+  const services = formData.getAll("services").map((v) => String(v));
 
   const supabase = await createSupabaseServerClient();
 
-  const { data: client, error } = await supabase
-    .from("clients")
-    .insert({
-      client_code: "",
-      company_name: companyName,
-      shop_name: emptyToNull(formData.get("shopName")),
-      phone: emptyToNull(formData.get("phone")),
-      email: emptyToNull(formData.get("email")),
-      contact_name: emptyToNull(formData.get("contactName")),
-      industry: emptyToNull(formData.get("industry")),
-      inflow_channel: emptyToNull(formData.get("inflowChannel")),
-      contact_method: emptyToNull(formData.get("contactMethod")),
-      contract_status: contractStatus,
-      current_status: "on_track",
-      contract_start_date: emptyToNull(formData.get("contractStartDate")),
-      contract_end_date: null,
-      notes: emptyToNull(formData.get("notes")),
-      revenue_amount: null,
-      fee_amount: null,
-      material_wait_started_at: null,
-    })
-    .select("id")
-    .single();
+  const { data: clientId, error } = await supabase.rpc("create_client", {
+    p_company_name: companyName,
+    p_shop_name: emptyToNull(formData.get("shopName")),
+    p_phone: emptyToNull(formData.get("phone")),
+    p_email: emptyToNull(formData.get("email")),
+    p_contact_name: emptyToNull(formData.get("contactName")),
+    p_industry: emptyToNull(formData.get("industry")),
+    p_inflow_channel: emptyToNull(formData.get("inflowChannel")),
+    p_contact_method: emptyToNull(formData.get("contactMethod")),
+    p_contract_status: contractStatus,
+    p_contract_start_date: emptyToNull(formData.get("contractStartDate")),
+    p_notes: emptyToNull(formData.get("notes")),
+    p_services: services,
+  });
 
-  if (error || !client) {
+  if (error || !clientId) {
     return { error: `顧客の登録に失敗しました: ${error?.message ?? "unknown error"}` };
   }
 
   if (primaryStaffId) {
     await supabase.from("client_assignments").insert({
-      client_id: client.id,
+      client_id: clientId,
       staff_id: primaryStaffId,
       assignment_type: "primary",
       active_from: new Date().toISOString().slice(0, 10),
@@ -66,7 +58,7 @@ export async function registerClientAction(
     });
   }
 
-  redirect(`/clients/${client.id}`);
+  redirect(`/clients/${clientId}`);
 }
 
 function emptyToNull(value: FormDataEntryValue | null): string | null {

@@ -35,6 +35,13 @@ export type TaskKind = "recurring" | "spot";
 
 export type SubmittedByType = "client" | "staff";
 
+/** create_material_submission / create_client_material_submission の p_files 要素。 */
+export interface MaterialSubmissionFileInput {
+  file_name: string;
+  drive_file_id: string;
+  drive_url: string;
+}
+
 export type WCheckAssetType = "drive_video" | "canva";
 
 export type WCheckStatus = "waiting" | "approved" | "revision_requested";
@@ -50,6 +57,9 @@ export type OutsourcingStatus =
   | "delivered"
   | "completed"
   | "cancelled";
+
+export type DriveIntegrationStatus = "not_connected" | "connected" | "error";
+export type DriveVerifyStatus = "ok" | "error";
 
 export type InternalTaskPriority = "A" | "B" | "C";
 
@@ -75,6 +85,7 @@ export interface Database {
           first_name: string;
           role: StaffRole;
           is_active: boolean;
+          last_login_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -85,6 +96,7 @@ export interface Database {
           first_name: string;
           role: StaffRole;
           is_active?: boolean;
+          last_login_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -115,6 +127,8 @@ export interface Database {
           client_confirmation_reminder_enabled: boolean;
           created_at: string;
           updated_at: string;
+          services: string[];
+          thumbnail_url: string | null;
         };
         Insert: Omit<
           Database["public"]["Tables"]["clients"]["Row"],
@@ -124,6 +138,8 @@ export interface Database {
           | "client_confirmation_reminder_enabled"
           | "created_at"
           | "updated_at"
+          | "services"
+          | "thumbnail_url"
         > & {
           id?: string;
           // 空文字を渡すとDBトリガーが自動採番する（例: D00028）
@@ -132,6 +148,8 @@ export interface Database {
           client_confirmation_reminder_enabled?: boolean;
           created_at?: string;
           updated_at?: string;
+          services?: string[];
+          thumbnail_url?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["clients"]["Insert"]>;
         Relationships: [];
@@ -373,6 +391,8 @@ export interface Database {
         Row: {
           id: string;
           client_id: string;
+          material_submission_id: string;
+          file_name: string | null;
           title: string;
           post_usage: string | null;
           requested_post_timing: string | null;
@@ -396,6 +416,37 @@ export interface Database {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["materials"]["Insert"]>;
+        Relationships: [];
+      };
+      material_submissions: {
+        Row: {
+          id: string;
+          client_id: string;
+          title: string;
+          post_usage: string | null;
+          requested_post_timing: string | null;
+          editing_instructions: string | null;
+          caption_instructions: string | null;
+          contact_notes: string | null;
+          shot_date: string | null;
+          received_at: string;
+          submitted_by_type: SubmittedByType;
+          drive_folder_id: string | null;
+          drive_folder_url: string | null;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["material_submissions"]["Row"],
+          "id" | "received_at" | "submitted_by_type" | "drive_folder_id" | "drive_folder_url" | "created_at"
+        > & {
+          id?: string;
+          received_at?: string;
+          submitted_by_type?: SubmittedByType;
+          drive_folder_id?: string | null;
+          drive_folder_url?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["material_submissions"]["Insert"]>;
         Relationships: [];
       };
       notifications: {
@@ -503,6 +554,21 @@ export interface Database {
         >;
         Relationships: [];
       };
+      wcheck_skips: {
+        Row: {
+          id: string;
+          production_task_id: string;
+          staff_id: string;
+          reason: string | null;
+          created_at: string;
+        };
+        Insert: Omit<Database["public"]["Tables"]["wcheck_skips"]["Row"], "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["wcheck_skips"]["Insert"]>;
+        Relationships: [];
+      };
       reminder_logs: {
         Row: {
           id: string;
@@ -521,6 +587,32 @@ export interface Database {
           reminded_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["reminder_logs"]["Insert"]>;
+        Relationships: [];
+      };
+      drive_integration: {
+        Row: {
+          id: number;
+          status: DriveIntegrationStatus;
+          google_account_email: string | null;
+          refresh_token_encrypted: string | null;
+          root_folder_id: string | null;
+          root_folder_name: string | null;
+          last_verified_at: string | null;
+          last_verified_status: DriveVerifyStatus | null;
+          last_error_message: string | null;
+          connected_by_staff_id: string | null;
+          connected_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["drive_integration"]["Row"],
+          "created_at" | "updated_at"
+        > & {
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["drive_integration"]["Insert"]>;
         Relationships: [];
       };
       outsourcing_requests: {
@@ -617,6 +709,13 @@ export interface Database {
         };
         Relationships: [];
       };
+      drive_integration_status_view: {
+        Row: Omit<
+          Database["public"]["Tables"]["drive_integration"]["Row"],
+          "refresh_token_encrypted" | "connected_by_staff_id" | "created_at"
+        >;
+        Relationships: [];
+      };
     };
     Functions: {
       create_post_record_and_complete_task: {
@@ -649,6 +748,107 @@ export interface Database {
           p_drive_file_id: string | null;
           p_drive_url: string | null;
           p_contractor_note: string | null;
+        };
+        Returns: string;
+      };
+      create_client: {
+        Args: {
+          p_company_name: string;
+          p_shop_name: string | null;
+          p_phone: string | null;
+          p_email: string | null;
+          p_contact_name: string | null;
+          p_industry: string | null;
+          p_inflow_channel: string | null;
+          p_contact_method: string | null;
+          p_contract_status: ContractStatus;
+          p_contract_start_date: string | null;
+          p_notes: string | null;
+          p_services: string[];
+        };
+        Returns: string;
+      };
+      update_client_basic_info: {
+        Args: {
+          p_client_id: string;
+          p_company_name: string;
+          p_shop_name: string | null;
+          p_phone: string | null;
+          p_email: string | null;
+          p_contact_name: string | null;
+          p_industry: string | null;
+          p_inflow_channel: string | null;
+          p_contact_method: string | null;
+          p_notes: string | null;
+          p_services: string[];
+        };
+        Returns: undefined;
+      };
+      update_client_thumbnail: {
+        Args: {
+          p_client_id: string;
+          p_thumbnail_url: string | null;
+        };
+        Returns: undefined;
+      };
+      update_client_contract: {
+        Args: {
+          p_client_id: string;
+          p_contract_status: ContractStatus;
+          p_contract_start_date: string | null;
+          p_contract_end_date: string | null;
+          p_update_finance: boolean;
+          p_revenue_amount: number | null;
+          p_fee_amount: number | null;
+        };
+        Returns: undefined;
+      };
+      update_client_reminder_setting: {
+        Args: {
+          p_client_id: string;
+          p_material_reminder_enabled: boolean;
+          p_client_confirmation_reminder_enabled: boolean;
+        };
+        Returns: undefined;
+      };
+      update_client_status: {
+        Args: {
+          p_client_id: string;
+          p_new_status: ClientCurrentStatus;
+        };
+        Returns: undefined;
+      };
+      create_material_submission: {
+        Args: {
+          p_id: string;
+          p_client_id: string;
+          p_title: string;
+          p_post_usage: string | null;
+          p_requested_post_timing: string | null;
+          p_editing_instructions: string | null;
+          p_caption_instructions: string | null;
+          p_contact_notes: string | null;
+          p_shot_date: string | null;
+          p_drive_folder_id: string | null;
+          p_drive_folder_url: string | null;
+          p_files: MaterialSubmissionFileInput[];
+        };
+        Returns: string;
+      };
+      create_client_material_submission: {
+        Args: {
+          p_id: string;
+          p_client_id: string;
+          p_title: string;
+          p_post_usage: string | null;
+          p_requested_post_timing: string | null;
+          p_editing_instructions: string | null;
+          p_caption_instructions: string | null;
+          p_contact_notes: string | null;
+          p_shot_date: string | null;
+          p_drive_folder_id: string | null;
+          p_drive_folder_url: string | null;
+          p_files: MaterialSubmissionFileInput[];
         };
         Returns: string;
       };

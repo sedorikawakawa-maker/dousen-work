@@ -12,7 +12,7 @@ import { getClientConfirmationElapsedDays } from "@/lib/reminders/clientConfirma
 type TypedClient = SupabaseClient<Database>;
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
 type ClientViewRow = Database["public"]["Views"]["clients_view"]["Row"];
-type MaterialRow = Database["public"]["Tables"]["materials"]["Row"];
+type MaterialSubmissionRow = Database["public"]["Tables"]["material_submissions"]["Row"];
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -107,14 +107,15 @@ export interface DashboardData {
   priorityTasks: ProductionTaskRow[];
   /** 自分が指定されたWチェックを優先表示するため、先頭側に並べ替え済み。 */
   wcheckWaitingItems: PendingWCheckItem[];
-  materialWaiting14Clients: DashboardClientRow[];
   unassignedTasks: ProductionTaskRow[];
-  newMaterials: MaterialRow[];
+  newMaterials: MaterialSubmissionRow[];
   /** 自分の担当顧客分のみ、経過日数の降順（催促優先度順）。 */
   myClientConfirmationWaitingItems: PendingConfirmationItem[];
+  /** 締切日に関わらず、投稿待ちのまま残っている自分の担当タスク（投稿すれば完了できるもの）。 */
+  postingWaitingTasks: ProductionTaskRow[];
 }
 
-function relevantDueDates(task: ProductionTaskRow): string[] {
+export function relevantDueDates(task: ProductionTaskRow): string[] {
   return [
     task.production_start_date,
     task.wcheck_due_date,
@@ -172,6 +173,7 @@ export async function getDashboardData(
   }
 
   const dueTodayTasks = myIncompleteTasks.filter((t) => relevantDueDates(t).includes(today));
+  const postingWaitingTasks = myIncompleteTasks.filter((t) => t.status === "posting_waiting");
 
   const priorityTasks = myIncompleteTasks
     .map((t) => {
@@ -195,14 +197,6 @@ export async function getDashboardData(
     })
     .slice(0, 20);
 
-  const materialWaiting14Clients = myClients.filter((c) => {
-    if (c.current_status !== "material_waiting" || !c.material_wait_started_at) return false;
-    const days = Math.floor(
-      (Date.now() - new Date(c.material_wait_started_at).getTime()) / (1000 * 60 * 60 * 24),
-    );
-    return days >= 14;
-  });
-
   const { data: unassignedTasks } = await supabase
     .from("production_tasks")
     .select("*")
@@ -211,10 +205,10 @@ export async function getDashboardData(
     .order("scheduled_post_date", { ascending: true, nullsFirst: false })
     .limit(10);
 
-  let newMaterials: MaterialRow[] = [];
+  let newMaterials: MaterialSubmissionRow[] = [];
   if (myClientIds.length > 0) {
     const { data } = await supabase
-      .from("materials")
+      .from("material_submissions")
       .select("*")
       .in("client_id", myClientIds)
       .order("received_at", { ascending: false })
@@ -237,9 +231,9 @@ export async function getDashboardData(
     dueTodayTasks,
     priorityTasks,
     wcheckWaitingItems,
-    materialWaiting14Clients,
     unassignedTasks: unassignedTasks ?? [],
     newMaterials,
     myClientConfirmationWaitingItems,
+    postingWaitingTasks,
   };
 }

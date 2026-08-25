@@ -6,6 +6,8 @@ import { getOutsourcingRequest, listOutsourcingDeliveries } from "@/lib/outsourc
 import { OUTSOURCING_STATUS_LABELS } from "@/lib/outsourcing/labels";
 import { buildOutsourcingUploadUrl } from "@/lib/outsourcing/token";
 import { CopyButton } from "@/components/CopyButton";
+import { PageContainer } from "@/components/PageContainer";
+import { StatusBadge } from "@/components/StatusBadge";
 import {
   cancelOutsourcingRequestAction,
   markOutsourcingCompletedAction,
@@ -54,25 +56,25 @@ export default async function OutsourcingDetailPage({
   const latestDelivery = deliveries[0] ?? null;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-6 sm:py-8">
+    <PageContainer className="gap-5 bg-neutral-50 py-6 sm:py-8">
       <div>
         <Link href="/outsourcing" className="text-sm text-neutral-500">
           ← 外注管理に戻る
         </Link>
-        <h1 className="mt-2 text-xl font-semibold text-neutral-900">{request.title}</h1>
-        <span className="mt-1 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-          {OUTSOURCING_STATUS_LABELS[request.status]}
-        </span>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-semibold text-neutral-900">{request.title}</h1>
+          <StatusBadge status={request.status} label={OUTSOURCING_STATUS_LABELS[request.status]} />
+        </div>
       </div>
 
       {saved ? (
-        <p className="rounded-md bg-green-50 px-4 py-2 text-sm text-green-700">更新しました。</p>
+        <p className="rounded-2xl bg-[var(--accent-soft-bg)] px-4 py-2 text-sm text-[var(--accent-soft-text)]">
+          更新しました。
+        </p>
       ) : null}
-      {error ? (
-        <p className="rounded-md bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p>
-      ) : null}
+      {error ? <p className="rounded-2xl bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p> : null}
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
         <dl className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <dt className="text-xs text-neutral-400">顧客</dt>
@@ -98,15 +100,11 @@ export default async function OutsourcingDetailPage({
           </div>
           <div>
             <dt className="text-xs text-neutral-400">社内担当者</dt>
-            <dd className="text-neutral-900">
-              {staffNameById.get(request.created_by_staff_id) ?? "不明"}
-            </dd>
+            <dd className="text-neutral-900">{staffNameById.get(request.created_by_staff_id) ?? "不明"}</dd>
           </div>
           <div>
             <dt className="text-xs text-neutral-400">依頼日</dt>
-            <dd className="text-neutral-900">
-              {new Date(request.requested_at).toLocaleDateString("ja-JP")}
-            </dd>
+            <dd className="text-neutral-900">{new Date(request.requested_at).toLocaleDateString("ja-JP")}</dd>
           </div>
           <div>
             <dt className="text-xs text-neutral-400">納期</dt>
@@ -114,27 +112,25 @@ export default async function OutsourcingDetailPage({
           </div>
         </dl>
         {request.instruction ? (
-          <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700">
-            制作指示: {request.instruction}
-          </p>
+          <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700">制作指示: {request.instruction}</p>
         ) : null}
         {request.material_link ? (
           <a
             href={request.material_link}
             target="_blank"
             rel="noreferrer"
-            className="mt-2 inline-block text-sm underline"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-neutral-300 px-3.5 py-2 text-xs font-medium text-neutral-700"
           >
             素材リンクを開く
           </a>
         ) : null}
       </section>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
         <h2 className="mb-3 text-sm font-semibold text-neutral-700">外注アップロードURL</h2>
         {newlyIssuedUrl ? (
-          <div className="mb-3 flex flex-col gap-2 rounded-md bg-yellow-50 px-3 py-2">
-            <p className="text-xs text-yellow-800">
+          <div className="mb-3 flex flex-col gap-2 rounded-2xl bg-amber-50 px-3 py-2.5">
+            <p className="text-xs text-amber-800">
               発行しました。このURLは今だけ表示されます。必ずコピーして外注先へ共有してください。
             </p>
             <div className="flex items-center gap-2">
@@ -143,16 +139,14 @@ export default async function OutsourcingDetailPage({
             </div>
           </div>
         ) : (
-          <p className="mb-3 text-xs text-neutral-500">
-            URLは発行・再発行の直後のみ表示されます。
-          </p>
+          <p className="mb-3 text-xs text-neutral-500">URLは発行・再発行の直後のみ表示されます。</p>
         )}
         <div className="flex flex-wrap gap-2">
           <form action={reissueOutsourcingTokenAction}>
             <input type="hidden" name="requestId" value={id} />
             <button
               type="submit"
-              className="rounded-md border border-neutral-300 px-3 py-2 text-xs text-neutral-700"
+              className="rounded-full border border-neutral-300 px-3.5 py-2 text-xs font-medium text-neutral-700"
             >
               URLを再発行
             </button>
@@ -162,7 +156,7 @@ export default async function OutsourcingDetailPage({
               <input type="hidden" name="requestId" value={id} />
               <button
                 type="submit"
-                className="rounded-md border border-red-300 px-3 py-2 text-xs text-red-700"
+                className="rounded-full border border-red-300 px-3.5 py-2 text-xs font-medium text-red-700"
               >
                 無効化する（中止）
               </button>
@@ -171,29 +165,27 @@ export default async function OutsourcingDetailPage({
         </div>
       </section>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-6">
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
         <h2 className="mb-3 text-sm font-semibold text-neutral-700">納品</h2>
         {deliveries.length === 0 ? (
           <p className="text-sm text-neutral-400">まだ納品されていません。</p>
         ) : (
           <ul className="flex flex-col gap-3 text-sm">
             {deliveries.map((d) => (
-              <li key={d.id} className="rounded-md border border-neutral-200 px-3 py-2">
-                <p className="text-xs text-neutral-400">
-                  {new Date(d.delivered_at).toLocaleString("ja-JP")}
-                </p>
+              <li key={d.id} className="rounded-2xl border border-neutral-200 px-3.5 py-3">
+                <p className="text-xs text-neutral-400">{new Date(d.delivered_at).toLocaleString("ja-JP")}</p>
                 {d.drive_url ? (
                   <a
                     href={d.drive_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-1 inline-block rounded-md border border-neutral-300 px-4 py-3 text-center text-sm font-medium text-neutral-700"
+                    className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-neutral-300 px-3.5 py-2 text-xs font-medium text-neutral-700"
                   >
                     制作物を開く
                   </a>
                 ) : null}
                 {d.contractor_note ? (
-                  <p className="mt-1 text-xs text-neutral-600">外注メモ: {d.contractor_note}</p>
+                  <p className="mt-1.5 text-xs text-neutral-600">外注メモ: {d.contractor_note}</p>
                 ) : null}
               </li>
             ))}
@@ -205,7 +197,7 @@ export default async function OutsourcingDetailPage({
             <input type="hidden" name="requestId" value={id} />
             <button
               type="submit"
-              className="w-full rounded-md bg-green-600 px-4 py-3 text-sm font-medium text-white"
+              className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
             >
               納品確認済みにする
             </button>
@@ -215,12 +207,12 @@ export default async function OutsourcingDetailPage({
         {task && latestDelivery?.drive_url && request.status !== "requested" ? (
           <Link
             href={`/tasks/${task.id}?assetUrl=${encodeURIComponent(latestDelivery.drive_url)}`}
-            className="mt-2 block w-full rounded-md bg-purple-600 px-4 py-3 text-center text-sm font-medium text-white"
+            className="mt-2 block w-full rounded-full border border-purple-300 bg-purple-50 px-4 py-3 text-center text-sm font-medium text-purple-700"
           >
             Wチェック登録へ進む
           </Link>
         ) : null}
       </section>
-    </main>
+    </PageContainer>
   );
 }

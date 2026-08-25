@@ -18,7 +18,7 @@ export function LoginForm() {
             type="text"
             required
             autoComplete="family-name"
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+            className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
           />
         </label>
         <label className="flex-1 text-sm font-medium text-neutral-700">
@@ -28,7 +28,7 @@ export function LoginForm() {
             type="text"
             required
             autoComplete="given-name"
-            className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+            className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
           />
         </label>
       </div>
@@ -40,7 +40,7 @@ export function LoginForm() {
           type="password"
           required
           autoComplete="current-password"
-          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+          className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
         />
       </label>
 
@@ -53,7 +53,7 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={isPending}
-        className="mt-2 w-full rounded-md bg-neutral-900 px-4 py-2 text-base font-medium text-white disabled:opacity-50"
+        className="mt-2 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50"
       >
         {isPending ? "ログイン中..." : "ログイン"}
       </button>

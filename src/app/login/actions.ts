@@ -41,6 +41,8 @@ export async function loginAction(
     const email = buildStaffAuthEmail(candidate.id);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error) {
+      // ログイン失敗時は更新しない。失敗してもログイン自体は継続させる（表示専用の付随情報のため）。
+      await adminClient.from("staff").update({ last_login_at: new Date().toISOString() }).eq("id", candidate.id);
       redirect("/");
     }
   }

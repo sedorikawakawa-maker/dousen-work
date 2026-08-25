@@ -6,6 +6,12 @@ export const WCHECK_ASSET_TYPE_LABELS: Record<WCheckAssetType, string> = {
   canva: "Canvaリンク",
 };
 
+/** 一覧画面などでURLをそのまま出さず、短い操作名として開くためのラベル。 */
+export const WCHECK_OPEN_LABEL: Record<WCheckAssetType, string> = {
+  drive_video: "動画を開く",
+  canva: "Canvaを開く",
+};
+
 /** リールはGoogle Drive動画、フィード/ストーリーズはCanvaを基本とする。 */
 export function assetTypeForPostType(postType: PostType): WCheckAssetType {
   return postType === "reel" ? "drive_video" : "canva";

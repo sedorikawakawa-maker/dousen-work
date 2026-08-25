@@ -9,11 +9,16 @@ import {
   LINK_TYPE_LABELS,
   POST_TYPE_LABELS,
   PRODUCTION_TASK_STATUS_LABELS,
+  postUsageLabel,
 } from "@/lib/clients/labels";
 import { describeWeekdayRule, isWeekdayRule, type WeekdayRule } from "@/lib/scheduling/weekdayRule";
 import { ensureRollingTasksForClient, getMonthlySummary } from "@/lib/scheduling/generate";
 import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
-import { listMaterialsForClient } from "@/lib/materials/queries";
+import {
+  listMaterialOptionsForClient,
+  listMaterialSubmissionsWithFilesForClient,
+  type MaterialSubmissionWithFiles,
+} from "@/lib/materials/queries";
 import { buildMaterialFormUrl } from "@/lib/materials/formToken";
 import { listClientConfirmationsForClient } from "@/lib/clientConfirmations/queries";
 import { CLIENT_CONFIRMATION_STATUS_LABELS } from "@/lib/clientConfirmations/labels";
@@ -21,11 +26,17 @@ import { listPostRecordsForClient, listRecentlyCompletedTasks } from "@/lib/post
 import { cancelPostRecordAction } from "@/app/post-records/actions";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { CopyButton } from "@/components/CopyButton";
+import { StatusBadge } from "@/components/StatusBadge";
+import { UrgencyBadge } from "@/components/UrgencyBadge";
+import { PageContainer } from "@/components/PageContainer";
+import { ClientAvatar } from "@/components/ClientAvatar";
 import {
   addMaterialAction,
   issueMaterialFormTokenAction,
+  removeClientThumbnailAction,
   revokeMaterialFormTokenAction,
   updateTaskScheduledDateAction,
+  uploadClientThumbnailAction,
 } from "./actions";
 
 const TABS = [
@@ -44,6 +55,14 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
+/** タブの並び・キー・URLパラメータは変えず、見た目のグルーピングだけに使う。 */
+const TAB_GROUPS: { label: string; keys: TabKey[] }[] = [
+  { label: "基本", keys: ["overview", "contract"] },
+  { label: "制作・運用", keys: ["profile", "schedule", "consumption"] },
+  { label: "やり取り", keys: ["materials", "posts", "confirmations"] },
+  { label: "参照情報", keys: ["links", "credentials", "history"] },
+];
+
 const NOT_YET_IMPLEMENTED: Partial<Record<TabKey, string>> = {
   consumption: "Phase 4（担当者ダッシュボード）以降で実装予定です。",
 };
@@ -58,6 +77,7 @@ export default async function ClientDetailPage({
   const { id } = await params;
   const { tab, newToken, saved, error } = await searchParams;
   const activeTab: TabKey = TABS.some((t) => t.key === tab) ? (tab as TabKey) : "overview";
+  const activeGroup = TAB_GROUPS.find((group) => group.keys.includes(activeTab)) ?? TAB_GROUPS[0];
 
   const supabase = await createSupabaseServerClient();
   const [detail, staffOptions] = await Promise.all([
@@ -87,12 +107,12 @@ export default async function ClientDetailPage({
     ]);
   }
 
-  let materials: Awaited<ReturnType<typeof listMaterialsForClient>> = [];
+  let materialSubmissions: MaterialSubmissionWithFiles[] = [];
   let hasActiveMaterialFormToken = false;
   let newlyIssuedFormUrl: string | null = null;
   if (activeTab === "materials") {
     const [materialsResult, tokenResult] = await Promise.all([
-      listMaterialsForClient(supabase, id),
+      listMaterialSubmissionsWithFilesForClient(supabase, id),
       supabase
         .from("material_form_tokens")
         .select("id")
@@ -100,7 +120,7 @@ export default async function ClientDetailPage({
         .eq("is_active", true)
         .maybeSingle(),
     ]);
-    materials = materialsResult;
+    materialSubmissions = materialsResult;
     hasActiveMaterialFormToken = !!tokenResult.data;
     if (newToken) {
       newlyIssuedFormUrl = await buildMaterialFormUrl(newToken);
@@ -115,12 +135,12 @@ export default async function ClientDetailPage({
   let postRecords: Awaited<ReturnType<typeof listPostRecordsForClient>> = [];
   let materialTitleById = new Map<string, string>();
   if (activeTab === "posts") {
-    const [postRecordsResult, materialsForNames] = await Promise.all([
+    const [postRecordsResult, materialOptions] = await Promise.all([
       listPostRecordsForClient(supabase, id),
-      listMaterialsForClient(supabase, id),
+      listMaterialOptionsForClient(supabase, id),
     ]);
     postRecords = postRecordsResult;
-    materialTitleById = new Map(materialsForNames.map((m) => [m.id, m.title]));
+    materialTitleById = new Map(materialOptions.map((o) => [o.id, o.label]));
   }
 
   const materialWaitDays =
@@ -131,79 +151,158 @@ export default async function ClientDetailPage({
     client.current_status === "material_waiting"
       ? getMaterialWaitLevel(client.material_wait_started_at)
       : "none";
-  const materialWaitBadgeClass =
-    materialWaitLevel === "urgent"
-      ? "bg-red-100 text-red-700"
-      : materialWaitLevel === "warning"
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-neutral-100 text-neutral-600";
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 px-4 py-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <Link href="/clients" className="text-sm text-neutral-500">
-            ← 顧客一覧に戻る
-          </Link>
-          <h1 className="mt-2 text-xl font-semibold text-neutral-900">
-            {client.company_name}
-            {client.shop_name ? `（${client.shop_name}）` : ""}
-          </h1>
-          <p className="text-sm text-neutral-500">{client.client_code}</p>
+    <PageContainer className="gap-5 bg-neutral-50 py-8">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <ClientAvatar thumbnailUrl={client.thumbnail_url} name={client.company_name} size="md" />
+          <div>
+            <Link href="/clients" className="text-sm text-neutral-500">
+              ← 顧客一覧に戻る
+            </Link>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold text-neutral-900">
+                {client.company_name}
+                {client.shop_name ? `（${client.shop_name}）` : ""}
+              </h1>
+              {materialWaitDays !== null && materialWaitLevel !== "none" ? (
+                <UrgencyBadge level={materialWaitLevel === "urgent" ? "urgent" : "warning"} />
+              ) : null}
+              <StatusBadge
+                status={client.current_status}
+                label={CLIENT_CURRENT_STATUS_LABELS[client.current_status]}
+              />
+              {materialWaitDays !== null && materialWaitLevel !== "none" ? (
+                <span className="text-xs font-medium tabular-nums text-neutral-500">
+                  {materialWaitDays}日経過
+                </span>
+              ) : null}
+            </div>
+            <p className="text-sm font-medium tabular-nums text-neutral-500">{client.client_code}</p>
+            <details className="mt-1">
+              <summary className="cursor-pointer text-xs text-neutral-500 underline">
+                {client.thumbnail_url ? "サムネイル画像を変更" : "サムネイル画像を登録"}
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <form action={uploadClientThumbnailAction} className="flex items-center gap-2">
+                  <input type="hidden" name="clientId" value={id} />
+                  <input name="file" type="file" accept="image/jpeg,image/png,image/webp" className="text-xs" />
+                  <button
+                    type="submit"
+                    className="whitespace-nowrap rounded-md border border-neutral-300 px-2.5 py-1 text-xs text-neutral-700"
+                  >
+                    アップロード
+                  </button>
+                </form>
+                {client.thumbnail_url ? (
+                  <form action={removeClientThumbnailAction}>
+                    <input type="hidden" name="clientId" value={id} />
+                    <button type="submit" className="text-xs text-red-600 underline">
+                      削除
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+              <p className="mt-1 text-[11px] text-neutral-500">jpg・png・webp / 5MB以下</p>
+            </details>
+          </div>
         </div>
         <Link
           href={`/clients/${id}/edit`}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+          className="whitespace-nowrap rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
         >
           編集
         </Link>
       </div>
 
-      <nav className="flex flex-wrap gap-1 border-b border-neutral-200">
-        {TABS.map((t) => (
-          <Link
-            key={t.key}
-            href={`/clients/${id}?tab=${t.key}`}
-            className={`rounded-t-md px-3 py-2 text-sm ${
-              activeTab === t.key
-                ? "border-b-2 border-neutral-900 font-medium text-neutral-900"
-                : "text-neutral-500"
-            }`}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </nav>
+      <div className="flex flex-col gap-2">
+        <nav className="grid grid-cols-4 gap-1 rounded-2xl bg-neutral-100 p-1">
+          {TAB_GROUPS.map((group) => {
+            const isActiveGroup = group === activeGroup;
+            return (
+              <Link
+                key={group.label}
+                href={`/clients/${id}?tab=${group.keys[0]}`}
+                className={`rounded-xl px-2 py-2.5 text-center text-xs font-semibold sm:text-sm ${
+                  isActiveGroup ? "bg-white text-[var(--accent-strong)] shadow-sm" : "text-neutral-500"
+                }`}
+              >
+                {group.label}
+              </Link>
+            );
+          })}
+        </nav>
 
-      <div className="rounded-lg border border-neutral-200 bg-white p-6">
+        <nav className="flex flex-wrap gap-x-5 gap-y-1 border-b border-neutral-200 px-1">
+          {activeGroup.keys.map((key) => {
+            const tab = TABS.find((t) => t.key === key)!;
+            const isActive = activeTab === key;
+            return (
+              <Link
+                key={key}
+                href={`/clients/${id}?tab=${key}`}
+                className={`border-b-2 pb-2 text-sm ${
+                  isActive
+                    ? "border-[var(--accent)] font-medium text-neutral-900"
+                    : "border-transparent text-neutral-500"
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+
+      <div className="rounded-2xl bg-white p-5 sm:p-6">
         {NOT_YET_IMPLEMENTED[activeTab] ? (
           <p className="text-sm text-neutral-400">{NOT_YET_IMPLEMENTED[activeTab]}</p>
         ) : null}
 
         {activeTab === "overview" ? (
-          <dl className="grid grid-cols-2 gap-4 text-sm">
-            <InfoRow label="契約状況" value={CONTRACT_STATUS_LABELS[client.contract_status]} />
-            <div>
-              <dt className="text-xs text-neutral-400">現在ステータス</dt>
-              <dd className="flex items-center gap-2 text-neutral-900">
-                {CLIENT_CURRENT_STATUS_LABELS[client.current_status]}
-                {materialWaitDays !== null ? (
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${materialWaitBadgeClass}`}>
-                    素材待ち{materialWaitDays}日経過
-                  </span>
-                ) : null}
-              </dd>
+          <div className="flex flex-col gap-6">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-10">
+              <div>
+                <h3 className="mb-3 text-sm font-semibold text-neutral-700">登録状況</h3>
+                <dl className="grid grid-cols-2 gap-4 text-sm">
+                  <InfoRow label="契約状況" value={CONTRACT_STATUS_LABELS[client.contract_status]} />
+                  <InfoRow label="業種" value={client.industry ?? "—"} />
+                  <InfoRow label="流入経路" value={client.inflow_channel ?? "—"} />
+                </dl>
+                <div className="mt-4">
+                  <dt className="text-xs text-neutral-500">提供サービス</dt>
+                  <dd className="mt-1.5 flex flex-wrap gap-1.5">
+                    {client.services.length > 0 ? (
+                      client.services.map((service) => (
+                        <span
+                          key={service}
+                          className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600"
+                        >
+                          {service}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm text-neutral-900">—</span>
+                    )}
+                  </dd>
+                </div>
+              </div>
+              <div className="border-t border-neutral-100 pt-6 lg:border-t-0 lg:border-l lg:pl-10 lg:pt-0">
+                <h3 className="mb-3 text-sm font-semibold text-neutral-700">連絡先</h3>
+                <dl className="grid grid-cols-2 gap-4 text-sm">
+                  <InfoRow label="電話番号" value={client.phone ?? "—"} />
+                  <InfoRow label="メールアドレス" value={client.email ?? "—"} />
+                  <InfoRow label="先方担当者" value={client.contact_name ?? "—"} />
+                  <InfoRow label="連絡手段" value={client.contact_method ?? "—"} />
+                </dl>
+              </div>
             </div>
-            <InfoRow label="電話番号" value={client.phone ?? "—"} />
-            <InfoRow label="メールアドレス" value={client.email ?? "—"} />
-            <InfoRow label="先方担当者" value={client.contact_name ?? "—"} />
-            <InfoRow label="業種" value={client.industry ?? "—"} />
-            <InfoRow label="流入経路" value={client.inflow_channel ?? "—"} />
-            <InfoRow label="連絡手段" value={client.contact_method ?? "—"} />
-            <div className="col-span-2">
-              <InfoRow label="備考" value={client.notes ?? "—"} />
+            <div className="border-t border-neutral-100 pt-6">
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">備考</h3>
+              <p className="max-w-2xl text-sm text-neutral-900">{client.notes ?? "—"}</p>
             </div>
-          </dl>
+          </div>
         ) : null}
 
         {activeTab === "contract" ? (
@@ -222,7 +321,7 @@ export default async function ClientDetailPage({
               />
             </dl>
             <div>
-              <h3 className="mb-2 text-xs font-semibold text-neutral-500">担当履歴</h3>
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">担当履歴</h3>
               <ul className="flex flex-col gap-1 text-sm">
                 {detail.assignments.map((a) => (
                   <li key={a.id}>
@@ -259,7 +358,7 @@ export default async function ClientDetailPage({
         {activeTab === "schedule" ? (
           <div className="flex flex-col gap-8">
             <div>
-              <h3 className="mb-2 text-xs font-semibold text-neutral-500">現在のルール</h3>
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">現在のルール</h3>
               <ul className="flex flex-col gap-2 text-sm">
                 {detail.scheduleRules
                   .filter((rule) => rule.is_active)
@@ -269,7 +368,7 @@ export default async function ClientDetailPage({
                       {isWeekdayRule(rule.weekday_rule)
                         ? describeWeekdayRule(rule.weekday_rule as WeekdayRule)
                         : "曜日未設定"}
-                      <span className="ml-2 text-xs text-neutral-400">
+                      <span className="ml-2 text-xs font-medium tabular-nums text-neutral-500">
                         {rule.valid_from} 〜 {rule.valid_to ?? "継続中"}
                       </span>
                     </li>
@@ -283,7 +382,7 @@ export default async function ClientDetailPage({
             </div>
 
             <div>
-              <h3 className="mb-2 text-xs font-semibold text-neutral-500">
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">
                 月間本数（通常＋持越し）
               </h3>
               <div className="overflow-x-auto">
@@ -351,7 +450,7 @@ export default async function ClientDetailPage({
             </div>
 
             <div>
-              <h3 className="mb-2 text-xs font-semibold text-neutral-500">
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">
                 今後の制作タスク（未完了）
               </h3>
               <ul className="flex flex-col gap-2 text-sm">
@@ -381,7 +480,7 @@ export default async function ClientDetailPage({
                         </span>
                       ) : null}
                       {task.assignee_staff_id ? (
-                        <span className="ml-2 text-xs text-neutral-400">
+                        <span className="ml-2 text-xs text-neutral-500">
                           担当: {staffNameById.get(task.assignee_staff_id) ?? "不明"}
                         </span>
                       ) : (
@@ -415,7 +514,7 @@ export default async function ClientDetailPage({
             </div>
 
             <div>
-              <h3 className="mb-2 text-xs font-semibold text-neutral-500">投稿済み（直近）</h3>
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">投稿済み（直近）</h3>
               <ul className="flex flex-col gap-2 text-sm">
                 {recentlyCompletedTasks.map((task) => (
                   <li
@@ -453,7 +552,7 @@ export default async function ClientDetailPage({
             ) : null}
 
             <div className="rounded-md border border-neutral-200 p-3">
-              <h3 className="mb-2 text-xs font-semibold text-neutral-500">
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">
                 顧客向け素材アップロードフォーム
               </h3>
 
@@ -500,50 +599,86 @@ export default async function ClientDetailPage({
             </div>
 
             <ul className="flex flex-col gap-2 text-sm">
-              {materials.map((m) => (
-                <li key={m.id} className="rounded-md border border-neutral-200 px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium">{m.title}</span>
-                    <span className="flex items-center gap-2 text-xs text-neutral-400">
-                      <span className="rounded-full bg-neutral-100 px-2 py-0.5">
-                        {m.submitted_by_type === "client" ? "顧客提出" : "スタッフ登録"}
+              {materialSubmissions.map(({ submission, files }) => (
+                <li key={submission.id} className="rounded-md border border-neutral-200">
+                  <details>
+                    <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2 marker:content-none">
+                      <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="font-medium">{submission.title}</span>
+                        <span className="text-xs text-neutral-500">
+                          {postUsageLabel(submission.post_usage)}
+                        </span>
+                        {submission.requested_post_timing ? (
+                          <span className="text-xs text-neutral-500">
+                            {submission.requested_post_timing}
+                          </span>
+                        ) : null}
+                        <span className="text-xs text-neutral-500">{files.length}ファイル</span>
+                        {submission.shot_date ? (
+                          <span className="text-xs text-neutral-500">撮影日: {submission.shot_date}</span>
+                        ) : null}
                       </span>
-                      {new Date(m.received_at).toLocaleString("ja-JP")} 受領
-                    </span>
-                  </div>
-                  <dl className="mt-2 grid grid-cols-2 gap-2 text-xs text-neutral-600">
-                    <InfoRow label="撮影日" value={m.shot_date ?? "—"} />
-                    <InfoRow label="投稿用途" value={m.post_usage ?? "—"} />
-                    <InfoRow label="投稿希望時期" value={m.requested_post_timing ?? "—"} />
-                    <InfoRow
-                      label="Drive"
-                      value={m.drive_url ? "リンクあり" : "未登録"}
-                    />
-                  </dl>
-                  {m.editing_instructions ? (
-                    <p className="mt-1 text-xs text-neutral-600">編集指示: {m.editing_instructions}</p>
-                  ) : null}
-                  {m.caption_instructions ? (
-                    <p className="mt-1 text-xs text-neutral-600">
-                      キャプション: {m.caption_instructions}
-                    </p>
-                  ) : null}
-                  {m.contact_notes ? (
-                    <p className="mt-1 text-xs text-neutral-600">連絡事項: {m.contact_notes}</p>
-                  ) : null}
-                  {m.drive_url ? (
-                    <a
-                      href={m.drive_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-1 inline-block text-xs underline"
-                    >
-                      Driveで開く
-                    </a>
-                  ) : null}
+                      <span className="flex items-center gap-2 text-xs text-neutral-500">
+                        <span className="rounded-full bg-neutral-100 px-2 py-0.5">
+                          {submission.submitted_by_type === "client" ? "顧客提出" : "スタッフ登録"}
+                        </span>
+                        <span className="font-medium tabular-nums">
+                          {new Date(submission.received_at).toLocaleString("ja-JP")}
+                        </span>{" "}
+                        受領
+                      </span>
+                    </summary>
+                    <div className="border-t border-neutral-100 px-3 py-2">
+                      {submission.drive_folder_url ? (
+                        <a
+                          href={submission.drive_folder_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mb-2 inline-block text-xs underline"
+                        >
+                          Google Driveでまとめて開く
+                        </a>
+                      ) : null}
+                      {submission.editing_instructions ? (
+                        <p className="mt-1 text-xs text-neutral-600">
+                          編集指示: {submission.editing_instructions}
+                        </p>
+                      ) : null}
+                      {submission.caption_instructions ? (
+                        <p className="mt-1 text-xs text-neutral-600">
+                          キャプション: {submission.caption_instructions}
+                        </p>
+                      ) : null}
+                      {submission.contact_notes ? (
+                        <p className="mt-1 text-xs text-neutral-600">
+                          連絡事項: {submission.contact_notes}
+                        </p>
+                      ) : null}
+                      <ul className="mt-2 flex flex-col gap-1">
+                        {files.map((file) => (
+                          <li
+                            key={file.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-neutral-50 px-2 py-1 text-xs"
+                          >
+                            <span className="text-neutral-700">{file.file_name ?? "（ファイル名不明）"}</span>
+                            {file.drive_url ? (
+                              <a href={file.drive_url} target="_blank" rel="noreferrer" className="underline">
+                                Driveで開く
+                              </a>
+                            ) : (
+                              <span className="text-neutral-400">未登録</span>
+                            )}
+                          </li>
+                        ))}
+                        {files.length === 0 ? (
+                          <li className="text-neutral-400">ファイルはありません。</li>
+                        ) : null}
+                      </ul>
+                    </div>
+                  </details>
                 </li>
               ))}
-              {materials.length === 0 ? (
+              {materialSubmissions.length === 0 ? (
                 <li className="text-neutral-400">登録済みの素材はありません。</li>
               ) : null}
             </ul>
@@ -553,7 +688,7 @@ export default async function ClientDetailPage({
               className="flex flex-col gap-3 border-t border-neutral-100 pt-4"
             >
               <input type="hidden" name="clientId" value={id} />
-              <h3 className="text-xs font-semibold text-neutral-500">
+              <h3 className="text-sm font-semibold text-neutral-700">
                 スタッフによる手動登録（LINE・メール等で受領した場合）
               </h3>
               <MaterialFields />
@@ -581,7 +716,7 @@ export default async function ClientDetailPage({
             <div className="flex justify-end">
               <Link
                 href={`/clients/${id}/post-records/new`}
-                className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
               >
                 ＋ 投稿実績登録
               </Link>
@@ -604,7 +739,7 @@ export default async function ClientDetailPage({
                         </span>
                       ) : null}
                     </span>
-                    <span className="text-xs text-neutral-400">
+                    <span className="text-xs text-neutral-500">
                       投稿担当: {staffNameById.get(p.posted_by_staff_id) ?? "不明"}
                     </span>
                   </div>
@@ -742,7 +877,7 @@ export default async function ClientDetailPage({
           <ul className="flex flex-col gap-2 text-sm">
             {detail.activityLogs.map((log) => (
               <li key={log.id} className="border-b border-neutral-100 pb-2">
-                <span className="text-neutral-400">
+                <span className="font-medium tabular-nums text-neutral-500">
                   {new Date(log.created_at).toLocaleString("ja-JP")}
                 </span>{" "}
                 {log.actor_staff_id ? staffNameById.get(log.actor_staff_id) ?? "不明なスタッフ" : "システム"}{" "}
@@ -755,14 +890,14 @@ export default async function ClientDetailPage({
           </ul>
         ) : null}
       </div>
-    </main>
+    </PageContainer>
   );
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-xs text-neutral-400">{label}</dt>
+      <dt className="text-xs text-neutral-500">{label}</dt>
       <dd className="text-neutral-900">{value}</dd>
     </div>
   );

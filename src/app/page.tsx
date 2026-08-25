@@ -6,38 +6,144 @@ import { canAccessManagementFeatures, STAFF_ROLE_LABELS } from "@/lib/auth/roles
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listClients } from "@/lib/clients/queries";
 import { getDashboardData } from "@/lib/dashboard/queries";
+import { buildTodayActionItems } from "@/lib/dashboard/todayActions";
 import {
   ASSIGNMENT_TYPE_LABELS,
+  CLIENT_CURRENT_STATUS_LABELS,
   NEXT_ACTION_BY_STATUS,
-  PRODUCTION_TASK_STATUS_LABELS,
+  POST_TYPE_LABELS,
 } from "@/lib/clients/labels";
-import { getMaterialWaitElapsedDays } from "@/lib/reminders/material";
-import { getClientConfirmationElapsedDays } from "@/lib/reminders/clientConfirmation";
-import { listTodayInternalTasksForStaff } from "@/lib/internalTasks/queries";
-import { INTERNAL_TASK_PRIORITY_LABELS } from "@/lib/internalTasks/labels";
+import { listMyIncompleteInternalTasks } from "@/lib/internalTasks/queries";
+import {
+  getManagementOverview,
+  selectPersonalInterventions,
+  selectPersonalPastMonthShortfalls,
+  type InterventionItem,
+} from "@/lib/interventions/queries";
+import { selectRemainingInternalTasks } from "@/lib/dashboard/todayActions";
+import {
+  addMonths,
+  buildCalendarEventsByDate,
+  currentCalendarMonthJST,
+  filterInternalTasksForMonth,
+  listScheduledPostsForMonth,
+  todayIsoJST,
+  type CalendarInternalTaskEvent,
+  type CalendarMonth,
+  type CalendarPostEvent,
+} from "@/lib/calendar/queries";
 import type { Database } from "@/lib/supabase/database.types";
+import { StatusBadge } from "@/components/StatusBadge";
+import { UrgencyBadge } from "@/components/UrgencyBadge";
+import { PageContainer } from "@/components/PageContainer";
+import { ClientAvatar } from "@/components/ClientAvatar";
+import { InternalTaskCard } from "@/components/InternalTaskCard";
+import { DashboardCalendar } from "@/components/DashboardCalendar";
 import { logoutAction } from "./logout-action";
 import { StatusSelect } from "./StatusSelect";
 
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
+const VISIBLE_INTERNAL_TASK_COUNT = 8;
 
-export default async function HomePage() {
+const INTERVENTION_STATUS_VALUE: Partial<Record<string, "material_waiting" | "client_confirmation_waiting">> = {
+  "素材待ち14日超": "material_waiting",
+  "素材待ち7日超": "material_waiting",
+  "顧客確認待ち14日超": "client_confirmation_waiting",
+  "顧客確認待ち7日超": "client_confirmation_waiting",
+};
+
+const INTERVENTION_STATUS_LABEL: Record<string, string> = {
+  material_waiting: "素材待ち",
+  client_confirmation_waiting: "顧客確認待ち",
+};
+
+function parseDisplayMonth(calYear: string | undefined, calMonth: string | undefined): CalendarMonth {
+  const year = Number(calYear);
+  const month0 = calMonth ? Number(calMonth) - 1 : NaN;
+  const isValid =
+    Number.isInteger(year) && year >= 2000 && year <= 2100 && Number.isInteger(month0) && month0 >= 0 && month0 <= 11;
+  return isValid ? { year, month0 } : currentCalendarMonthJST();
+}
+
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ calYear?: string; calMonth?: string }>;
+}) {
   const staff = await getCurrentStaff();
 
   if (!staff) {
     redirect("/login");
   }
 
+  const { calYear, calMonth } = await searchParams;
+  const displayMonth = parseDisplayMonth(calYear, calMonth);
+
   const supabase = await createSupabaseServerClient();
-  const [dashboard, allClients, todayInternalTasks] = await Promise.all([
+  const [dashboard, allClients, myIncompleteInternalTasks, overview] = await Promise.all([
     getDashboardData(supabase, staff.id),
     listClients(supabase),
-    listTodayInternalTasksForStaff(supabase, staff.id),
+    listMyIncompleteInternalTasks(supabase, staff.id),
+    getManagementOverview(supabase),
   ]);
 
   const clientNameById = new Map(
     allClients.map((c) => [c.id, c.shop_name ? `${c.company_name}（${c.shop_name}）` : c.company_name]),
   );
+  const clientThumbnailById = new Map(allClients.map((c) => [c.id, c.thumbnail_url]));
+
+  // カレンダー: 担当顧客（主担当・副担当、既存dashboard.myClientsをそのまま再利用）の投稿予定を表示月分だけ取得。
+  const myClientIds = dashboard.myClients.map((c) => c.id);
+  const scheduledPosts = await listScheduledPostsForMonth(supabase, myClientIds, displayMonth);
+  const calendarPostEvents: CalendarPostEvent[] = scheduledPosts
+    .filter((t): t is typeof t & { scheduled_post_date: string } => t.scheduled_post_date !== null)
+    .map((t) => ({
+      id: t.id,
+      clientId: t.client_id,
+      clientName: clientNameById.get(t.client_id) ?? "不明な顧客",
+      clientThumbnailUrl: clientThumbnailById.get(t.client_id) ?? null,
+      postType: t.post_type,
+      status: t.status,
+      scheduledPostDate: t.scheduled_post_date,
+    }));
+
+  // カレンダー: 自分担当の未完了社内タスクのうち、表示月が締切のもの（既存クエリの結果を再利用、重複クエリなし）。
+  const internalTasksForMonth = filterInternalTasksForMonth(myIncompleteInternalTasks, displayMonth);
+  const calendarInternalTaskEvents: CalendarInternalTaskEvent[] = internalTasksForMonth.map((task) => ({
+    task,
+    clientName: task.client_id ? (clientNameById.get(task.client_id) ?? "不明な顧客") : null,
+    clientThumbnailUrl: task.client_id ? (clientThumbnailById.get(task.client_id) ?? null) : null,
+  }));
+
+  const calendarEventsByDate = buildCalendarEventsByDate({
+    posts: calendarPostEvents,
+    internalTasks: calendarInternalTaskEvents,
+  });
+
+  const prevMonth = addMonths(displayMonth, -1);
+  const nextMonth = addMonths(displayMonth, 1);
+  const thisMonth = currentCalendarMonthJST();
+  const monthHref = (m: CalendarMonth) => `/?calYear=${m.year}&calMonth=${m.month0 + 1}`;
+
+  const todayActionItems = buildTodayActionItems({
+    dashboard,
+    staffId: staff.id,
+    clientNameById,
+    myIncompleteInternalTasks,
+  });
+  const mostUrgentCount = todayActionItems.filter(
+    (item) => item.urgency === "overdue" || item.urgency === "urgent",
+  ).length;
+
+  // 「今日やること」に採用されなかった残りの未完了社内タスク（重複表示は避ける）。
+  const remainingInternalTasks = selectRemainingInternalTasks(myIncompleteInternalTasks);
+  const visibleInternalTasks = remainingInternalTasks.slice(0, VISIBLE_INTERNAL_TASK_COUNT);
+
+  // 「要対応」= 今日やることよりも複数日放置・滞留しているもの。management側と同じ判定ロジックを再利用し、
+  // 自分に関係する分（主担当・副担当・外注作成者等、既存の担当情報）だけに絞り込む。
+  const personalInterventions = selectPersonalInterventions(overview, staff.id);
+  const personalShortfalls = selectPersonalPastMonthShortfalls(overview, staff.id);
+  const needsAttentionCount = personalInterventions.length + personalShortfalls.length;
 
   const todayLabel = new Date().toLocaleDateString("ja-JP", {
     month: "long",
@@ -49,7 +155,7 @@ export default async function HomePage() {
   const canSeeUnassignedWarning = canAccessManagementFeatures(staff.role);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 px-4 py-6 sm:py-8">
+    <PageContainer className="gap-6 bg-neutral-50 py-6 sm:py-8">
       <header className="flex items-center justify-between">
         <div>
           <p className="text-sm text-neutral-500">{todayLabel}</p>
@@ -60,87 +166,246 @@ export default async function HomePage() {
         <form action={logoutAction}>
           <button
             type="submit"
-            className="rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700"
+            className="rounded-full border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700"
           >
             ログアウト
           </button>
         </form>
       </header>
 
+      {/* 1. 今日やること */}
+      <section className="rounded-3xl border border-[var(--accent-soft-bg)] bg-gradient-to-br from-[var(--accent-soft-bg)] to-white p-5">
+        <h2 className="text-lg font-semibold text-neutral-900">今日やること</h2>
+        <p className="mt-1 text-sm text-neutral-600">
+          優先度の高い順に並んでいます。上のカードから対応してください。
+        </p>
+
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <SummaryChip label="今日やること" count={todayActionItems.length} tone="accent" />
+          <SummaryChip label="最優先" count={mostUrgentCount} tone="urgent" />
+          <SummaryChip label="要対応" count={needsAttentionCount} tone="warning" />
+        </div>
+
+        <div className="mt-4 flex flex-col gap-2.5">
+          {todayActionItems.map((item) => (
+            <div
+              key={item.id}
+              className={`flex flex-col gap-2 rounded-2xl border-l-4 bg-white p-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3 ${
+                item.urgency === "overdue" || item.urgency === "urgent" || item.urgency === "due_today"
+                  ? "border-l-red-400"
+                  : item.urgency === "warning"
+                    ? "border-l-amber-300"
+                    : "border-l-neutral-200"
+              }`}
+            >
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-semibold text-neutral-900">{item.clientName}</span>
+                  {item.urgency ? <UrgencyBadge level={item.urgency} /> : null}
+                  <StatusBadge status={item.statusValue} label={item.statusLabel} />
+                  {item.assignmentTag ? (
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                        item.assignmentHighlight
+                          ? "bg-[var(--accent-soft-bg)] text-[var(--accent-soft-text)]"
+                          : "bg-neutral-100 text-neutral-600"
+                      }`}
+                    >
+                      {item.assignmentTag}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-sm text-neutral-700">{item.title}</p>
+                {item.meta ? <p className="text-xs text-neutral-500">{item.meta}</p> : null}
+              </div>
+              <Link
+                href={item.href}
+                className="inline-flex shrink-0 items-center justify-center rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
+              >
+                {item.actionLabel}
+              </Link>
+            </div>
+          ))}
+          {todayActionItems.length === 0 ? (
+            <p className="rounded-2xl bg-white p-4 text-center text-sm text-neutral-400">
+              今日やることはありません。
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      {/* 1.5 担当社内タスク（期限超過・今日締切・priority Aは上の「今日やること」側に既出のため、ここでは重複除外済み） */}
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-neutral-700">
+            担当社内タスク（{remainingInternalTasks.length}件）
+          </h2>
+          <Link
+            href="/internal-tasks?scope=mine"
+            className="whitespace-nowrap text-xs font-medium text-neutral-500 underline"
+          >
+            社内タスク一覧を見る
+          </Link>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-2.5">
+          {visibleInternalTasks.map((task) => (
+            <InternalTaskCard
+              key={task.id}
+              task={task}
+              clientName={task.client_id ? (clientNameById.get(task.client_id) ?? "不明な顧客") : null}
+              clientThumbnailUrl={task.client_id ? (clientThumbnailById.get(task.client_id) ?? null) : null}
+            />
+          ))}
+          {remainingInternalTasks.length === 0 ? (
+            <p className="rounded-2xl bg-neutral-50 p-4 text-center text-sm text-neutral-400">
+              現在、担当中の社内タスクはありません。
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      {/* 2. 要対応 */}
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-neutral-900">要対応</h2>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              複数日にわたり滞留している、自分に関係する案件です。
+            </p>
+          </div>
+          <Link href="/reminders" className="whitespace-nowrap text-xs font-medium text-neutral-500 underline">
+            催促一覧を見る
+          </Link>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-2.5">
+          {personalInterventions.map((item) => (
+            <InterventionCard key={item.key} item={item} />
+          ))}
+
+          {personalShortfalls.length > 0 ? (
+            <div className="flex flex-col gap-2 rounded-2xl border border-neutral-200 p-3.5">
+              <p className="text-xs font-semibold text-neutral-500">前月未達・持越し</p>
+              {personalShortfalls.map((row) => {
+                const [year, month] = row.sourceMonth.split("-");
+                return (
+                  <Link
+                    key={`${row.clientId}-${row.postType}-${row.sourceMonth}`}
+                    href={`/clients/${row.clientId}?tab=schedule`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl px-2 py-1.5 hover:bg-neutral-50"
+                  >
+                    <span className="flex flex-wrap items-center gap-1.5 text-sm">
+                      <span className="font-semibold text-neutral-900">{row.clientName}</span>
+                      <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                        {year}年{Number(month)}月 ・ {POST_TYPE_LABELS[row.postType]}
+                      </span>
+                      {row.needsReschedule ? (
+                        <span className="rounded-full border border-red-300 px-2 py-0.5 text-xs font-semibold text-red-700">
+                          再日程設定が必要
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="text-xs text-neutral-500">
+                      実績/目標: <span className="font-medium tabular-nums">{row.actual}/{row.total}</span> ／ 未達
+                      <span className="font-semibold tabular-nums text-red-600"> {row.shortfall}</span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {needsAttentionCount === 0 ? (
+            <p className="rounded-2xl bg-neutral-50 p-4 text-center text-sm text-neutral-400">
+              現在、要対応の案件はありません。
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      {/* 3. スケジュール（担当顧客の投稿予定・自分担当の社内タスク締切を月単位で確認） */}
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-semibold text-neutral-700">スケジュール</h2>
+        <DashboardCalendar
+          key={`${displayMonth.year}-${displayMonth.month0}`}
+          year={displayMonth.year}
+          month0={displayMonth.month0}
+          todayIso={todayIsoJST()}
+          eventsByDate={calendarEventsByDate}
+          prevMonthHref={monthHref(prevMonth)}
+          nextMonthHref={monthHref(nextMonth)}
+          todayMonthHref={monthHref(thisMonth)}
+        />
+      </section>
+
+      {/* 4. 担当顧客 */}
+      <section>
+        <h2 className="mb-3 text-sm font-semibold text-neutral-700">
+          担当顧客一覧（{dashboard.myClients.length}件）
+        </h2>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {dashboard.myClients.map((client) => (
+            <div
+              key={client.id}
+              className="flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2">
+                  <ClientAvatar thumbnailUrl={client.thumbnail_url} name={client.company_name} size="sm" />
+                  <div>
+                    <p className="font-semibold text-neutral-900">{client.company_name}</p>
+                    <p className="text-xs text-neutral-500">{ASSIGNMENT_TYPE_LABELS[client.assignmentType]}</p>
+                  </div>
+                </div>
+                <StatusBadge
+                  status={client.current_status}
+                  label={CLIENT_CURRENT_STATUS_LABELS[client.current_status]}
+                />
+              </div>
+
+              <div>
+                <p className="text-xs text-neutral-500">
+                  今月: 通常<span className="font-medium tabular-nums text-neutral-700">{client.progress.target}</span>
+                  {client.progress.carryover > 0 ? (
+                    <>
+                      {" + 持越し"}
+                      <span className="font-medium tabular-nums text-neutral-700">{client.progress.carryover}</span>
+                    </>
+                  ) : (
+                    ""
+                  )}
+                  {" = 必要"}
+                  <span className="font-medium tabular-nums text-neutral-700">{client.progress.required}</span>本 / 実績
+                  <span className="font-medium tabular-nums text-neutral-700">{client.progress.actual}</span>本
+                </p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  次にやること: {NEXT_ACTION_BY_STATUS[client.current_status]}
+                </p>
+              </div>
+
+              <div className="mt-auto flex items-center justify-between gap-2">
+                <StatusSelect clientId={client.id} currentStatus={client.current_status} />
+                <Link
+                  href={`/clients/${client.id}`}
+                  className="whitespace-nowrap rounded-full border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700"
+                >
+                  詳細を見る
+                </Link>
+              </div>
+            </div>
+          ))}
+          {dashboard.myClients.length === 0 ? (
+            <p className="col-span-full py-4 text-center text-sm text-neutral-400">
+              担当している顧客はまだありません。
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      {/* 5. 補助情報 */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <AlertSection title="今日締切" count={dashboard.dueTodayTasks.length} tone="urgent">
-          <TaskList
-            tasks={dashboard.dueTodayTasks}
-            clientNameById={clientNameById}
-            emptyText="今日締切のタスクはありません。"
-          />
-        </AlertSection>
-
-        <AlertSection title="Wチェック待ち" count={dashboard.wcheckWaitingItems.length} tone="wcheck">
-          <ul className="flex flex-col gap-2 text-sm">
-            {dashboard.wcheckWaitingItems.map(({ wcheck, task }) => {
-              const isMine = wcheck.reviewer_staff_id === staff.id;
-              return (
-                <li key={wcheck.id}>
-                  <Link href={`/tasks/${task.id}`} className="hover:underline">
-                    {clientNameById.get(task.client_id) ?? "不明な顧客"} / {task.title}
-                  </Link>
-                  {wcheck.reviewer_staff_id ? (
-                    <span
-                      className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
-                        isMine ? "bg-purple-600 text-white" : "bg-purple-100 text-purple-700"
-                      }`}
-                    >
-                      {isMine ? "あなた指定" : "指定担当あり"}
-                    </span>
-                  ) : null}
-                </li>
-              );
-            })}
-            {dashboard.wcheckWaitingItems.length === 0 ? (
-              <li className="text-neutral-400">Wチェック待ちのタスクはありません。</li>
-            ) : null}
-          </ul>
-          <Link href="/wchecks" className="mt-3 inline-block text-xs underline">
-            Wチェック待ち一覧を開く →
-          </Link>
-        </AlertSection>
-
-        <AlertSection
-          title="顧客確認待ち"
-          count={dashboard.myClientConfirmationWaitingItems.length}
-          tone="urgent"
-        >
-          <ul className="flex flex-col gap-2 text-sm">
-            {dashboard.myClientConfirmationWaitingItems.map(({ confirmation, task }) => {
-              const days = getClientConfirmationElapsedDays(confirmation.requested_at);
-              const isUrgent = days !== null && days >= 14;
-              return (
-                <li key={confirmation.id}>
-                  <Link href={`/tasks/${task.id}`} className="hover:underline">
-                    {clientNameById.get(task.client_id) ?? "不明な顧客"} / {task.title}
-                  </Link>
-                  {days !== null ? (
-                    <span
-                      className={`ml-2 rounded-full px-2 py-0.5 text-xs font-medium ${
-                        isUrgent ? "bg-red-600 text-white" : "bg-yellow-100 text-yellow-800"
-                      }`}
-                    >
-                      {days}日経過{isUrgent ? "（最優先催促）" : ""}
-                    </span>
-                  ) : null}
-                </li>
-              );
-            })}
-            {dashboard.myClientConfirmationWaitingItems.length === 0 ? (
-              <li className="text-neutral-400">顧客確認待ちはありません。</li>
-            ) : null}
-          </ul>
-          <Link href="/client-confirmations" className="mt-3 inline-block text-xs underline">
-            顧客確認待ち一覧を開く →
-          </Link>
-        </AlertSection>
-
         <AlertSection title="新着素材" count={dashboard.newMaterials.length} tone="neutral">
           <ul className="flex flex-col gap-2 text-sm">
             {dashboard.newMaterials.map((m) => (
@@ -148,7 +413,7 @@ export default async function HomePage() {
                 <Link href={`/clients/${m.client_id}?tab=materials`} className="hover:underline">
                   {clientNameById.get(m.client_id) ?? "不明な顧客"} / {m.title}
                 </Link>
-                <span className="ml-2 text-xs text-neutral-400">
+                <span className="ml-2 text-xs font-medium tabular-nums text-neutral-500">
                   {new Date(m.received_at).toLocaleDateString("ja-JP")}
                 </span>
               </li>
@@ -159,46 +424,8 @@ export default async function HomePage() {
           </ul>
         </AlertSection>
 
-        <AlertSection
-          title="素材待ち14日超"
-          count={dashboard.materialWaiting14Clients.length}
-          tone="urgent"
-        >
-          <ul className="flex flex-col gap-2 text-sm">
-            {dashboard.materialWaiting14Clients.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-2">
-                <Link href={`/clients/${c.id}`} className="underline">
-                  {c.company_name}
-                </Link>
-                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                  {getMaterialWaitElapsedDays(c.material_wait_started_at)}日経過
-                </span>
-              </li>
-            ))}
-            {dashboard.materialWaiting14Clients.length === 0 ? (
-              <li className="text-neutral-400">該当する顧客はありません。</li>
-            ) : null}
-          </ul>
-        </AlertSection>
-
-        <AlertSection
-          title="優先タスク（今やるべきこと）"
-          count={dashboard.priorityTasks.length}
-          tone="warning"
-        >
-          <TaskList
-            tasks={dashboard.priorityTasks}
-            clientNameById={clientNameById}
-            emptyText="直近3日以内・期限超過のタスクはありません。"
-          />
-        </AlertSection>
-
         {canSeeUnassignedWarning ? (
-          <AlertSection
-            title="未割当タスクの警告"
-            count={dashboard.unassignedTasks.length}
-            tone="warning"
-          >
+          <AlertSection title="未割当タスクの警告" count={dashboard.unassignedTasks.length} tone="warning">
             <TaskList
               tasks={dashboard.unassignedTasks}
               clientNameById={clientNameById}
@@ -207,80 +434,71 @@ export default async function HomePage() {
           </AlertSection>
         ) : null}
       </div>
+    </PageContainer>
+  );
+}
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-neutral-700">今日の社内タスク</h2>
-          <Link href="/internal-tasks" className="text-xs underline">
-            社内タスク一覧を開く →
-          </Link>
-        </div>
-        <ul className="flex flex-col gap-2 text-sm">
-          {todayInternalTasks.map((task) => (
-            <li key={task.id}>
-              <Link href={`/internal-tasks/${task.id}/edit`} className="hover:underline">
-                {task.title}
-              </Link>
-              <span className="ml-2 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                {task.category}
+function InterventionCard({ item }: { item: InterventionItem }) {
+  const statusValue = INTERVENTION_STATUS_VALUE[item.issueType];
+
+  return (
+    <Link
+      href={item.href}
+      className={`flex flex-col gap-2 rounded-2xl border-l-4 bg-white p-3.5 shadow-sm hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between sm:gap-3 ${
+        item.level === "urgent" ? "border-l-red-400" : "border-l-amber-300"
+      }`}
+    >
+      <div className="flex min-w-0 items-start gap-2.5">
+        <ClientAvatar thumbnailUrl={item.clientThumbnailUrl} name={item.clientName} size="xs" />
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-neutral-900">{item.clientName}</span>
+            <UrgencyBadge level={item.level} />
+            {statusValue ? (
+              <StatusBadge status={statusValue} label={INTERVENTION_STATUS_LABEL[statusValue]} />
+            ) : (
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600">
+                {item.issueType}
               </span>
-              <span className="ml-2 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                {INTERNAL_TASK_PRIORITY_LABELS[task.priority]}
-              </span>
-            </li>
-          ))}
-          {todayInternalTasks.length === 0 ? (
-            <li className="text-neutral-400">今日締切・期限超過の社内タスクはありません。</li>
-          ) : null}
-        </ul>
-      </section>
-
-      <section className="rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-neutral-700">担当顧客一覧（顧客登録順）</h2>
-
-        <div className="flex flex-col gap-3">
-          {dashboard.myClients.map((client) => (
-            <div
-              key={client.id}
-              className="flex flex-col gap-3 rounded-md border border-neutral-200 p-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="flex flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-neutral-900">{client.company_name}</span>
-                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                    {ASSIGNMENT_TYPE_LABELS[client.assignmentType]}
-                  </span>
-                </div>
-                <p className="text-xs text-neutral-500">
-                  今月: 通常{client.progress.target}
-                  {client.progress.carryover > 0 ? ` + 持越し${client.progress.carryover}` : ""}
-                  {" = 必要"}
-                  {client.progress.required}本 / 実績{client.progress.actual}本
-                </p>
-                <p className="text-xs text-neutral-500">
-                  次にやること: {NEXT_ACTION_BY_STATUS[client.current_status]}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <StatusSelect clientId={client.id} currentStatus={client.current_status} />
-                <Link
-                  href={`/clients/${client.id}`}
-                  className="whitespace-nowrap rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700"
-                >
-                  顧客情報を見る
-                </Link>
-              </div>
-            </div>
-          ))}
-          {dashboard.myClients.length === 0 ? (
-            <p className="py-4 text-center text-sm text-neutral-400">
-              担当している顧客はまだありません。
-            </p>
-          ) : null}
+            )}
+          </div>
+          <p className="text-sm text-neutral-700">
+            {item.nextAction}
+            {item.elapsedDays !== null ? (
+              <span className="font-medium tabular-nums">（{item.elapsedDays}日経過）</span>
+            ) : (
+              ""
+            )}
+          </p>
         </div>
-      </section>
-    </main>
+      </div>
+      <span className="inline-flex shrink-0 items-center justify-center self-start rounded-full border border-neutral-300 px-3.5 py-1.5 text-xs font-medium text-neutral-700 sm:self-center">
+        対応する ›
+      </span>
+    </Link>
+  );
+}
+
+function SummaryChip({
+  label,
+  count,
+  tone,
+}: {
+  label: string;
+  count: number;
+  tone: "accent" | "urgent" | "warning";
+}) {
+  const toneClass = {
+    accent: "text-[var(--accent-strong)]",
+    urgent: "text-red-600",
+    warning: "text-amber-600",
+  }[tone];
+
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-white px-2 py-2.5 text-center">
+      <p className={`text-xl font-bold tabular-nums ${toneClass}`}>{count}</p>
+      <p className="mt-0.5 text-[11px] text-neutral-500">{label}</p>
+    </div>
   );
 }
 
@@ -296,19 +514,17 @@ function AlertSection({
   children: ReactNode;
 }) {
   const toneClass = {
-    urgent: "bg-red-100 text-red-700",
-    warning: "bg-yellow-100 text-yellow-800",
+    urgent: "bg-red-50 text-red-700",
+    warning: "bg-amber-50 text-amber-700",
     wcheck: "bg-purple-100 text-purple-700",
     neutral: "bg-neutral-100 text-neutral-600",
   }[tone];
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white p-4">
+    <section className="rounded-2xl border border-neutral-200 bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-neutral-700">{title}</h2>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${toneClass}`}>
-          {count}
-        </span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${toneClass}`}>{count}</span>
       </div>
       {children}
     </section>
@@ -331,13 +547,8 @@ function TaskList({
           <Link href={`/tasks/${task.id}`} className="hover:underline">
             {clientNameById.get(task.client_id) ?? "不明な顧客"} / {task.title}
           </Link>
-          <span className="ml-2 text-xs text-neutral-400">
-            {PRODUCTION_TASK_STATUS_LABELS[task.status]}
-          </span>
           {!task.assignee_staff_id ? (
-            <span className="ml-2 rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
-              未割当
-            </span>
+            <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">未割当</span>
           ) : null}
         </li>
       ))}

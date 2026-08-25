@@ -287,6 +287,52 @@ export async function requestWCheckRevisionAction(formData: FormData) {
 }
 
 /**
+ * Wチェックを省略して顧客確認待ちへ直接進める。
+ * w_checks レコードは作成せず、省略の事実だけを wcheck_skips に追記保存する
+ * （削除・上書きはしない。activity_logsへの記録はDBトリガー側で行う）。
+ * RLSはWチェック系と同じくis_active_staff()のみで、part_timeを含む全有効スタッフが利用可能。
+ */
+export async function skipWCheckAction(formData: FormData) {
+  const taskId = String(formData.get("taskId"));
+  const reason = emptyToNull(formData.get("reason"));
+  const returnTo = safeReturnTo(formData.get("returnTo"), `/tasks/${taskId}`);
+
+  const staff = await getCurrentStaff();
+  if (!staff) redirect("/login");
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: task } = await supabase
+    .from("production_tasks")
+    .select("status")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (!task || !RESOLVABLE_STATUSES.includes(task.status)) {
+    redirect(
+      `${returnTo}?error=${encodeURIComponent("制作待ち・制作中のタスクのみWチェックを省略できます")}`,
+    );
+  }
+
+  const { error } = await supabase.from("wcheck_skips").insert({
+    production_task_id: taskId,
+    staff_id: staff.id,
+    reason,
+  });
+
+  if (error) {
+    redirect(`${returnTo}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  await supabase
+    .from("production_tasks")
+    .update({ status: "client_confirmation_waiting" })
+    .eq("id", taskId);
+
+  redirect(`${returnTo}?saved=1`);
+}
+
+/**
  * 顧客確認依頼済みの登録。
  * 重要: WチェックOKになっただけでは client_confirmations を作らない。
  * 実際に担当者が公式LINE等で顧客へ送った後、この操作で初めて作成する。

@@ -10,21 +10,103 @@ import {
   removeUnstartedFutureTasksForRule,
 } from "@/lib/scheduling/generate";
 import type { WeekdayRule } from "@/lib/scheduling/weekdayRule";
-import { getDriveService } from "@/lib/drive/DriveService";
 import { generateMaterialFormToken, hashMaterialFormToken } from "@/lib/materials/formToken";
+import { uploadFilesForMaterialSubmission } from "@/lib/materials/submissionUpload";
 import type {
   AssignmentType,
   ContractStatus,
-  Database,
   LinkType,
+  MaterialSubmissionFileInput,
   PostType,
 } from "@/lib/supabase/database.types";
-
-type ClientUpdate = Database["public"]["Tables"]["clients"]["Update"];
 
 function emptyToNull(value: FormDataEntryValue | null): string | null {
   const text = String(value ?? "").trim();
   return text === "" ? null : text;
+}
+
+const THUMBNAIL_BUCKET = "client-thumbnails";
+const MAX_THUMBNAIL_BYTES = 5 * 1024 * 1024;
+const ALLOWED_THUMBNAIL_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+
+function extensionForThumbnailType(mime: string): string {
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  return "jpg";
+}
+
+/** 顧客ロゴ/店舗サムネイルのアップロード・差し替え。Google Driveの素材フォルダとは無関係。 */
+export async function uploadClientThumbnailAction(formData: FormData) {
+  const clientId = String(formData.get("clientId"));
+  const file = formData.get("file");
+
+  if (!(file instanceof File) || file.size === 0) {
+    redirect(`/clients/${clientId}?tab=overview&error=${encodeURIComponent("画像ファイルを選択してください")}`);
+  }
+  if (!ALLOWED_THUMBNAIL_TYPES.includes(file.type)) {
+    redirect(
+      `/clients/${clientId}?tab=overview&error=${encodeURIComponent("jpg・png・webp形式の画像のみアップロードできます")}`,
+    );
+  }
+  if (file.size > MAX_THUMBNAIL_BYTES) {
+    redirect(`/clients/${clientId}?tab=overview&error=${encodeURIComponent("画像は5MB以下にしてください")}`);
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  // 安全な差し替え順序: 1) 新画像を新規パスへアップロード 2) 成功確認 3) DB更新 4) DB更新成功後にのみ旧画像を削除。
+  // 新画像アップロード・DB更新のいずれかが失敗した場合、既存の旧画像には一切触れない。
+  const path = `${clientId}/${Date.now()}.${extensionForThumbnailType(file.type)}`;
+  const { error: uploadError } = await supabase.storage
+    .from(THUMBNAIL_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: true });
+
+  if (uploadError) {
+    redirect(`/clients/${clientId}?tab=overview&error=${encodeURIComponent("画像のアップロードに失敗しました")}`);
+  }
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(THUMBNAIL_BUCKET).getPublicUrl(path);
+
+  const { error: rpcError } = await supabase.rpc("update_client_thumbnail", {
+    p_client_id: clientId,
+    p_thumbnail_url: publicUrl,
+  });
+
+  if (rpcError) {
+    // DB更新が失敗した場合、旧画像は残したまま。今回アップロードした新画像は孤立するが、
+    // 誤って旧画像を消すよりも安全なため、ベストエフォートで新画像だけ後始末する。
+    await supabase.storage.from(THUMBNAIL_BUCKET).remove([path]);
+    redirect(`/clients/${clientId}?tab=overview&error=${encodeURIComponent("画像の保存に失敗しました")}`);
+  }
+
+  // DB更新が成功した後にのみ、新パス以外の旧ファイルを削除する（ベストエフォート）。
+  // 削除に失敗しても、サムネイル更新自体は既に成功しているためエラー扱いにしない。
+  const { data: existingFiles } = await supabase.storage.from(THUMBNAIL_BUCKET).list(clientId);
+  const staleFiles = (existingFiles ?? [])
+    .map((f) => `${clientId}/${f.name}`)
+    .filter((existingPath) => existingPath !== path);
+  if (staleFiles.length > 0) {
+    await supabase.storage.from(THUMBNAIL_BUCKET).remove(staleFiles);
+  }
+
+  redirect(`/clients/${clientId}?tab=overview&saved=1`);
+}
+
+/** 顧客ロゴ/店舗サムネイルの削除。 */
+export async function removeClientThumbnailAction(formData: FormData) {
+  const clientId = String(formData.get("clientId"));
+  const supabase = await createSupabaseServerClient();
+
+  const { data: existingFiles } = await supabase.storage.from(THUMBNAIL_BUCKET).list(clientId);
+  if (existingFiles && existingFiles.length > 0) {
+    await supabase.storage.from(THUMBNAIL_BUCKET).remove(existingFiles.map((f) => `${clientId}/${f.name}`));
+  }
+
+  await supabase.rpc("update_client_thumbnail", { p_client_id: clientId, p_thumbnail_url: null });
+
+  redirect(`/clients/${clientId}?tab=overview&saved=1`);
 }
 
 function editUrl(clientId: string, params: Record<string, string>) {
@@ -35,21 +117,21 @@ function editUrl(clientId: string, params: Record<string, string>) {
 export async function updateBasicInfoAction(formData: FormData) {
   const clientId = String(formData.get("clientId"));
   const supabase = await createSupabaseServerClient();
+  const services = formData.getAll("services").map((v) => String(v));
 
-  const { error } = await supabase
-    .from("clients")
-    .update({
-      company_name: String(formData.get("companyName") ?? "").trim(),
-      shop_name: emptyToNull(formData.get("shopName")),
-      phone: emptyToNull(formData.get("phone")),
-      email: emptyToNull(formData.get("email")),
-      contact_name: emptyToNull(formData.get("contactName")),
-      industry: emptyToNull(formData.get("industry")),
-      inflow_channel: emptyToNull(formData.get("inflowChannel")),
-      contact_method: emptyToNull(formData.get("contactMethod")),
-      notes: emptyToNull(formData.get("notes")),
-    })
-    .eq("id", clientId);
+  const { error } = await supabase.rpc("update_client_basic_info", {
+    p_client_id: clientId,
+    p_company_name: String(formData.get("companyName") ?? "").trim(),
+    p_shop_name: emptyToNull(formData.get("shopName")),
+    p_phone: emptyToNull(formData.get("phone")),
+    p_email: emptyToNull(formData.get("email")),
+    p_contact_name: emptyToNull(formData.get("contactName")),
+    p_industry: emptyToNull(formData.get("industry")),
+    p_inflow_channel: emptyToNull(formData.get("inflowChannel")),
+    p_contact_method: emptyToNull(formData.get("contactMethod")),
+    p_notes: emptyToNull(formData.get("notes")),
+    p_services: services,
+  });
 
   redirect(
     editUrl(clientId, error ? { error: error.message, section: "basic" } : { saved: "basic" }),
@@ -61,20 +143,23 @@ export async function updateContractAction(formData: FormData) {
   const staff = await getCurrentStaff();
   const supabase = await createSupabaseServerClient();
 
-  const update: ClientUpdate = {
-    contract_status: String(formData.get("contractStatus") ?? "proposal") as ContractStatus,
-    contract_start_date: emptyToNull(formData.get("contractStartDate")),
-    contract_end_date: emptyToNull(formData.get("contractEndDate")),
-  };
+  const contractStatus = String(formData.get("contractStatus") ?? "proposal") as ContractStatus;
+  const contractStartDate = emptyToNull(formData.get("contractStartDate"));
+  const contractEndDate = emptyToNull(formData.get("contractEndDate"));
 
-  if (staff && canViewFinance(staff.role)) {
-    const revenue = emptyToNull(formData.get("revenueAmount"));
-    const fee = emptyToNull(formData.get("feeAmount"));
-    update.revenue_amount = revenue === null ? null : Number(revenue);
-    update.fee_amount = fee === null ? null : Number(fee);
-  }
+  const canUpdateFinance = Boolean(staff && canViewFinance(staff.role));
+  const revenue = emptyToNull(formData.get("revenueAmount"));
+  const fee = emptyToNull(formData.get("feeAmount"));
 
-  const { error } = await supabase.from("clients").update(update).eq("id", clientId);
+  const { error } = await supabase.rpc("update_client_contract", {
+    p_client_id: clientId,
+    p_contract_status: contractStatus,
+    p_contract_start_date: contractStartDate,
+    p_contract_end_date: contractEndDate,
+    p_update_finance: canUpdateFinance,
+    p_revenue_amount: canUpdateFinance && revenue !== null ? Number(revenue) : null,
+    p_fee_amount: canUpdateFinance && fee !== null ? Number(fee) : null,
+  });
 
   redirect(
     editUrl(
@@ -374,13 +459,11 @@ export async function updateReminderSettingAction(formData: FormData) {
     formData.get("clientConfirmationReminderEnabled") === "on";
   const supabase = await createSupabaseServerClient();
 
-  const { error } = await supabase
-    .from("clients")
-    .update({
-      material_reminder_enabled: materialReminderEnabled,
-      client_confirmation_reminder_enabled: clientConfirmationReminderEnabled,
-    })
-    .eq("id", clientId);
+  const { error } = await supabase.rpc("update_client_reminder_setting", {
+    p_client_id: clientId,
+    p_material_reminder_enabled: materialReminderEnabled,
+    p_client_confirmation_reminder_enabled: clientConfirmationReminderEnabled,
+  });
 
   redirect(
     editUrl(
@@ -400,29 +483,49 @@ export async function addMaterialAction(formData: FormData) {
     redirect(`/clients/${clientId}?tab=materials&error=${encodeURIComponent("内容（タイトル）を入力してください")}`);
   }
 
-  let driveFileId: string | null = null;
-  let driveUrl: string | null = null;
   const file = formData.get("file");
-  if (file instanceof File && file.size > 0) {
-    const drive = getDriveService();
-    const result = await drive.uploadFile({ file, clientId, folderHint: "materials" });
-    driveFileId = result.driveFileId;
-    driveUrl = result.driveUrl;
+  const files = file instanceof File && file.size > 0 ? [file] : [];
+
+  // submission IDを先に確定し、Drive submissionフォルダの一意化とDB行のidに同じ値を使う。
+  // Drive格納に失敗した場合はここで中断し、submission・materialsとも作成しない
+  // （Drive成功 → DB保存の順序を守る。顧客向けフォームと共通の仕組み）。
+  let submissionId = "";
+  let driveFolderId: string | null = null;
+  let driveFolderUrl: string | null = null;
+  let uploadedFiles: MaterialSubmissionFileInput[] = [];
+  try {
+    const result = await uploadFilesForMaterialSubmission({ clientId, title, files });
+    submissionId = result.submissionId;
+    driveFolderId = result.driveFolderId;
+    driveFolderUrl = result.driveFolderUrl;
+    uploadedFiles = result.files;
+  } catch {
+    redirect(
+      `/clients/${clientId}?tab=materials&error=${encodeURIComponent("ファイルの保存に失敗しました。時間をおいて再度お試しください")}`,
+    );
   }
 
-  await supabase.from("materials").insert({
-    client_id: clientId,
-    title,
-    post_usage: emptyToNull(formData.get("postUsage")),
-    requested_post_timing: emptyToNull(formData.get("requestedPostTiming")),
-    editing_instructions: emptyToNull(formData.get("editingInstructions")),
-    caption_instructions: emptyToNull(formData.get("captionInstructions")),
-    contact_notes: emptyToNull(formData.get("contactNotes")),
-    shot_date: emptyToNull(formData.get("shotDate")),
-    drive_file_id: driveFileId,
-    drive_url: driveUrl,
-    submitted_by_type: "staff",
+  // submission作成＋materials作成を1トランザクションで行うRPC（顧客向けフォームと共通の仕組み）。
+  const { error } = await supabase.rpc("create_material_submission", {
+    p_id: submissionId,
+    p_client_id: clientId,
+    p_title: title,
+    p_post_usage: emptyToNull(formData.get("postUsage")),
+    p_requested_post_timing: emptyToNull(formData.get("requestedPostTiming")),
+    p_editing_instructions: emptyToNull(formData.get("editingInstructions")),
+    p_caption_instructions: emptyToNull(formData.get("captionInstructions")),
+    p_contact_notes: emptyToNull(formData.get("contactNotes")),
+    p_shot_date: emptyToNull(formData.get("shotDate")),
+    p_drive_folder_id: driveFolderId,
+    p_drive_folder_url: driveFolderUrl,
+    p_files: uploadedFiles,
   });
+
+  if (error) {
+    redirect(
+      `/clients/${clientId}?tab=materials&error=${encodeURIComponent("登録に失敗しました。時間をおいて再度お試しください")}`,
+    );
+  }
 
   redirect(`/clients/${clientId}?tab=materials&saved=1`);
 }
