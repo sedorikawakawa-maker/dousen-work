@@ -23,7 +23,7 @@ import { buildMaterialFormUrl } from "@/lib/materials/formToken";
 import { listClientConfirmationsForClient } from "@/lib/clientConfirmations/queries";
 import { CLIENT_CONFIRMATION_STATUS_LABELS } from "@/lib/clientConfirmations/labels";
 import { listPostRecordsForClient, listRecentlyCompletedTasks } from "@/lib/postRecords/queries";
-import { cancelPostRecordAction } from "@/app/post-records/actions";
+import { cancelPostRecordAction } from "@/app/(app)/post-records/actions";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusBadge } from "@/components/StatusBadge";

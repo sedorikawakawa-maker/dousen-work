@@ -57,7 +57,7 @@ export default async function ClientsPage({
   const hasActiveFilter = Boolean(validCurrentStatus || validContractStatus || assigneeStaffId);
 
   return (
-    <PageContainer className="gap-6 bg-neutral-50 py-8">
+    <PageContainer variant="wide" className="gap-6 bg-neutral-50 py-8">
       <header className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-neutral-900">顧客一覧</h1>
         <Link

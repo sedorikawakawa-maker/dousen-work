@@ -1,10 +1,6 @@
 import type { Metadata } from "next";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { getCurrentStaff } from "@/lib/auth/session";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { countUnreadNotifications } from "@/lib/notifications/queries";
-import { SiteHeader } from "@/components/SiteHeader";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -16,21 +12,10 @@ export const metadata: Metadata = {
   description: "制作工程を流す業務OS",
 };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const staff = await getCurrentStaff();
-
-  let unreadCount = 0;
-  if (staff) {
-    const supabase = await createSupabaseServerClient();
-    unreadCount = await countUnreadNotifications(supabase, staff.id);
-  }
-
+export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="ja" className={`${geistMono.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">
-        {staff ? <SiteHeader role={staff.role} unreadCount={unreadCount} /> : null}
-        {children}
-      </body>
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }

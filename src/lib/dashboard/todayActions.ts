@@ -1,8 +1,9 @@
 import type { Database } from "@/lib/supabase/database.types";
-import { PRODUCTION_TASK_STATUS_LABELS } from "@/lib/clients/labels";
+import { POST_TYPE_LABELS, PRODUCTION_TASK_STATUS_LABELS } from "@/lib/clients/labels";
 import type { StatusValue, UrgencyLevel } from "@/lib/clients/statusStyles";
 import { getClientConfirmationElapsedDays, getClientConfirmationLevel } from "@/lib/reminders/clientConfirmation";
 import { INTERNAL_TASK_PRIORITY_LABELS, INTERNAL_TASK_STATUS_LABELS } from "@/lib/internalTasks/labels";
+import type { PendingWCheckItem } from "@/lib/wchecks/queries";
 import { relevantDueDates, type DashboardData } from "./queries";
 
 type ProductionTaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
@@ -52,6 +53,8 @@ export interface TodayActionItem {
   statusValue: StatusValue;
   statusLabel: string;
   clientName: string;
+  /** ClientAvatar表示用。今のところWチェック修正依頼カードのみで使用する。 */
+  clientThumbnailUrl?: string | null;
   title: string;
   meta: string | null;
   assignmentTag: string | null;
@@ -60,6 +63,13 @@ export interface TodayActionItem {
   urgency: UrgencyLevel | null;
   href: string;
   actionLabel: string;
+  /** Wチェック修正依頼専用の強調表示・詳細情報。通常の制作中タスクと区別するために使う。 */
+  wcheckRevision?: {
+    postTypeLabel: string;
+    revisionComment: string;
+    requestedAt: string;
+    scheduledPostDate: string | null;
+  };
 }
 
 const TASK_ACTION_LABEL: Partial<Record<ProductionTaskRow["status"], string>> = {
@@ -97,10 +107,20 @@ export function buildTodayActionItems(params: {
   dashboard: DashboardData;
   staffId: string;
   clientNameById: Map<string, string>;
+  clientThumbnailById?: Map<string, string | null>;
   /** 自分の担当分で未完了の社内タスク全件（listMyIncompleteInternalTasksの結果）。 */
   myIncompleteInternalTasks?: InternalTaskRow[];
+  /** 自分が担当者の制作タスクで、Wチェック修正依頼が未対応のまま残っているもの。 */
+  pendingWCheckRevisions?: PendingWCheckItem[];
 }): TodayActionItem[] {
-  const { dashboard, staffId, clientNameById, myIncompleteInternalTasks = [] } = params;
+  const {
+    dashboard,
+    staffId,
+    clientNameById,
+    clientThumbnailById = new Map(),
+    myIncompleteInternalTasks = [],
+    pendingWCheckRevisions = [],
+  } = params;
   const today = todayIso();
   const todayJST = todayIsoJST();
 
@@ -175,6 +195,28 @@ export function buildTodayActionItems(params: {
     },
   );
 
+  // Wチェック修正依頼: 通常の制作中タスクと区別するため、専用のwcheckRevisionフィールドを持たせる。
+  // かなり優先度の高い項目として扱うため urgency は "urgent"（最優先）とする。
+  const wcheckRevisionItems: TodayActionItem[] = pendingWCheckRevisions.map(({ wcheck, task }) => ({
+    id: `wcheck-revision-${task.id}`,
+    statusValue: task.status,
+    statusLabel: PRODUCTION_TASK_STATUS_LABELS[task.status],
+    clientName: clientNameById.get(task.client_id) ?? "不明な顧客",
+    clientThumbnailUrl: clientThumbnailById.get(task.client_id) ?? null,
+    title: task.title,
+    meta: null,
+    assignmentTag: null,
+    urgency: "urgent",
+    href: `/tasks/${task.id}`,
+    actionLabel: "修正内容を確認",
+    wcheckRevision: {
+      postTypeLabel: POST_TYPE_LABELS[task.post_type],
+      revisionComment: wcheck.revision_comment ?? "",
+      requestedAt: wcheck.reviewed_at ?? wcheck.requested_at,
+      scheduledPostDate: task.scheduled_post_date,
+    },
+  }));
+
   // 素材待ちは「今日やること」の対象からは外し、経過日数に応じて「要対応」セクション
   // （selectPersonalInterventions）へ一本化する（同じ案件が両方に出るのを避けるため）。
 
@@ -201,7 +243,13 @@ export function buildTodayActionItems(params: {
       };
     });
 
-  const items = [...taskItems, ...wcheckItems, ...confirmationItems, ...internalTaskItems];
+  const items = [
+    ...taskItems,
+    ...wcheckRevisionItems,
+    ...wcheckItems,
+    ...confirmationItems,
+    ...internalTaskItems,
+  ];
 
   items.sort((a, b) => {
     const rankA = a.urgency ? URGENCY_RANK[a.urgency] : 9;

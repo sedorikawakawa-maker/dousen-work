@@ -40,7 +40,7 @@ export default async function ManagementDashboardPage() {
   } as const;
 
   return (
-    <PageContainer className="gap-6 bg-neutral-50 py-6 sm:py-8">
+    <PageContainer variant="wide" className="gap-6 bg-neutral-50 py-6 sm:py-8">
       <div className="flex items-center justify-between gap-3">
         <div>
           <Link href="/" className="text-sm text-neutral-500">

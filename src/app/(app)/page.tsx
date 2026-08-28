@@ -14,6 +14,7 @@ import {
   POST_TYPE_LABELS,
 } from "@/lib/clients/labels";
 import { listMyIncompleteInternalTasks } from "@/lib/internalTasks/queries";
+import { listPendingWCheckRevisionsForAssignee } from "@/lib/wchecks/queries";
 import {
   getManagementOverview,
   selectPersonalInterventions,
@@ -80,11 +81,12 @@ export default async function HomePage({
   const displayMonth = parseDisplayMonth(calYear, calMonth);
 
   const supabase = await createSupabaseServerClient();
-  const [dashboard, allClients, myIncompleteInternalTasks, overview] = await Promise.all([
+  const [dashboard, allClients, myIncompleteInternalTasks, overview, pendingWCheckRevisions] = await Promise.all([
     getDashboardData(supabase, staff.id),
     listClients(supabase),
     listMyIncompleteInternalTasks(supabase, staff.id),
     getManagementOverview(supabase),
+    listPendingWCheckRevisionsForAssignee(supabase, staff.id),
   ]);
 
   const clientNameById = new Map(
@@ -129,7 +131,9 @@ export default async function HomePage({
     dashboard,
     staffId: staff.id,
     clientNameById,
+    clientThumbnailById,
     myIncompleteInternalTasks,
+    pendingWCheckRevisions,
   });
   const mostUrgentCount = todayActionItems.filter(
     (item) => item.urgency === "overdue" || item.urgency === "urgent",
@@ -143,7 +147,10 @@ export default async function HomePage({
   // 自分に関係する分（主担当・副担当・外注作成者等、既存の担当情報）だけに絞り込む。
   const personalInterventions = selectPersonalInterventions(overview, staff.id);
   const personalShortfalls = selectPersonalPastMonthShortfalls(overview, staff.id);
-  const needsAttentionCount = personalInterventions.length + personalShortfalls.length;
+  // Wチェック修正依頼は「今日やること」に既にカードとして表示されるため、ここでは
+  // 要対応の集計件数にだけ反映し、カードとしては二重表示しない。
+  const needsAttentionCount =
+    personalInterventions.length + personalShortfalls.length + pendingWCheckRevisions.length;
 
   const todayLabel = new Date().toLocaleDateString("ja-JP", {
     month: "long",
@@ -155,7 +162,7 @@ export default async function HomePage({
   const canSeeUnassignedWarning = canAccessManagementFeatures(staff.role);
 
   return (
-    <PageContainer className="gap-6 bg-neutral-50 py-6 sm:py-8">
+    <PageContainer variant="wide" className="gap-6 bg-neutral-50 py-6 sm:py-8">
       <header className="flex items-center justify-between">
         <div>
           <p className="text-sm text-neutral-500">{todayLabel}</p>
@@ -190,7 +197,9 @@ export default async function HomePage({
           {todayActionItems.map((item) => (
             <div
               key={item.id}
-              className={`flex flex-col gap-2 rounded-2xl border-l-4 bg-white p-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3 ${
+              className={`flex flex-col gap-2 rounded-2xl border-l-4 p-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3 ${
+                item.wcheckRevision ? "bg-amber-50" : "bg-white"
+              } ${
                 item.urgency === "overdue" || item.urgency === "urgent" || item.urgency === "due_today"
                   ? "border-l-red-400"
                   : item.urgency === "warning"
@@ -200,9 +209,20 @@ export default async function HomePage({
             >
               <div className="flex min-w-0 flex-col gap-1.5">
                 <div className="flex flex-wrap items-center gap-1.5">
+                  {item.wcheckRevision ? (
+                    <ClientAvatar thumbnailUrl={item.clientThumbnailUrl ?? null} name={item.clientName} size="xs" />
+                  ) : null}
                   <span className="font-semibold text-neutral-900">{item.clientName}</span>
-                  {item.urgency ? <UrgencyBadge level={item.urgency} /> : null}
-                  <StatusBadge status={item.statusValue} label={item.statusLabel} />
+                  {item.wcheckRevision ? (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                      Wチェック修正依頼
+                    </span>
+                  ) : (
+                    <>
+                      {item.urgency ? <UrgencyBadge level={item.urgency} /> : null}
+                      <StatusBadge status={item.statusValue} label={item.statusLabel} />
+                    </>
+                  )}
                   {item.assignmentTag ? (
                     <span
                       className={`rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -215,8 +235,35 @@ export default async function HomePage({
                     </span>
                   ) : null}
                 </div>
-                <p className="text-sm text-neutral-700">{item.title}</p>
-                {item.meta ? <p className="text-xs text-neutral-500">{item.meta}</p> : null}
+                {item.wcheckRevision ? (
+                  <div>
+                    <p className="text-xs text-neutral-500">
+                      {item.title} ・ {item.wcheckRevision.postTypeLabel}
+                      {item.wcheckRevision.scheduledPostDate ? (
+                        <>
+                          {" ・ 投稿予定: "}
+                          <span className="font-medium tabular-nums">{item.wcheckRevision.scheduledPostDate}</span>
+                        </>
+                      ) : null}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      <span className="font-medium tabular-nums">
+                        {new Date(item.wcheckRevision.requestedAt).toLocaleString("ja-JP")}
+                      </span>{" "}
+                      にWチェックから修正が返ってきています
+                    </p>
+                    {item.wcheckRevision.revisionComment ? (
+                      <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-neutral-700">
+                        修正内容: {item.wcheckRevision.revisionComment}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm text-neutral-700">{item.title}</p>
+                    {item.meta ? <p className="text-xs text-neutral-500">{item.meta}</p> : null}
+                  </>
+                )}
               </div>
               <Link
                 href={item.href}

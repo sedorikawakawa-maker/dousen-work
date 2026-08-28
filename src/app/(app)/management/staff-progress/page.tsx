@@ -19,7 +19,7 @@ export default async function StaffProgressPage() {
   const rows = await getStaffProgressOverview(supabase);
 
   return (
-    <PageContainer className="gap-6 bg-neutral-50 py-6 sm:py-8">
+    <PageContainer variant="wide" className="gap-6 bg-neutral-50 py-6 sm:py-8">
       <div>
         <Link href="/management" className="text-sm text-neutral-500">
           ← 管理ダッシュボードに戻る
