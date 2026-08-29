@@ -35,6 +35,12 @@ export interface UploadToResolvedFolderInput {
   folderId: string;
 }
 
+export interface ResolveFolderInput {
+  clientId: string;
+  /** 顧客フォルダ直下の用途フォルダ名（例: "制作動画"）。無ければ作成、あれば再利用する。 */
+  folderHint: string;
+}
+
 export interface DriveService {
   /** モック実装かどうか。UI側で開発環境の注意書き表示判定に使う。 */
   readonly isMock: boolean;
@@ -47,6 +53,13 @@ export interface DriveService {
   resolveMaterialSubmissionFolder(input: ResolveMaterialSubmissionFolderInput): Promise<DriveFolderRef>;
   /** 上記で解決済みのフォルダへ直接アップロードする（folderHintによる再解決は行わない）。 */
   uploadFileToResolvedFolder(input: UploadToResolvedFolderInput): Promise<DriveUploadResult>;
+  /**
+   * {root}/{client_code}_{company_name}/{folderHint}/ を解決(無ければ作成)して返すだけの汎用メソッド。
+   * ファイルはアップロードしない。制作動画ライブラリのように「同じ共有フォルダへ複数ファイルを
+   * まとめて置く」用途（1回resolve→uploadFileToResolvedFolderを複数回）や、
+   * フォルダを開くリンクの表示に使う。
+   */
+  resolveFolder(input: ResolveFolderInput): Promise<DriveFolderRef>;
 }
 
 /**
@@ -88,6 +101,15 @@ class MockDriveService implements DriveService {
     return {
       driveFileId: id,
       driveUrl: `https://drive.google.com/mock-storage/folder/${folderId}/${encodeURIComponent(file.name)}?id=${id}`,
+    };
+  }
+
+  /** clientId+folderHintから決定的なIDを作る（同じ組み合わせなら毎回同じフォルダに解決される）。 */
+  async resolveFolder({ clientId, folderHint }: ResolveFolderInput): Promise<DriveFolderRef> {
+    const id = `mock-folder-${clientId}-${folderHint}`;
+    return {
+      folderId: id,
+      folderUrl: `https://drive.google.com/mock-storage/${clientId}/${encodeURIComponent(folderHint)}?id=${id}`,
     };
   }
 }

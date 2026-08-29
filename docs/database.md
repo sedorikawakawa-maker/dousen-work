@@ -346,6 +346,50 @@ instagram, tiktok, youtube, website, drive_root, canva_feed, canva_story, canva_
 
 ---
 
+## wcheck_list_views
+
+スタッフごとの「Wチェック待ち一覧を最後に開いた時刻」。Sidebarの新着バッジ判定専用
+（notificationsの既読管理とは役割を分ける）。1スタッフ1行。
+
+| column | type | note |
+|---|---|---|
+| staff_id | uuid PK, FK staff | |
+| last_viewed_at | timestamptz | |
+| created_at | timestamptz | |
+| updated_at | timestamptz | |
+
+新着判定: `w_checks.status = 'waiting' AND w_checks.requested_at > (自分のlast_viewed_at)`。
+行が存在しないスタッフ（一覧を一度も開いていない）は新着0件として扱い、既存の待ち行列を
+一括で「新着」表示しない。`/wchecks` を開いたタイミングで専用Server Actionから
+upsertする（Server Componentのレンダリング内では更新しない）。
+
+---
+
+## production_videos
+
+顧客ごとの「完成した納品用・投稿用動画」の保管庫。制作途中動画・post_records/final/との
+連動はなし（完全に独立した単独アップロード機能）。
+
+| column | type | note |
+|---|---|---|
+| id | uuid PK | |
+| client_id | uuid FK clients | |
+| post_type | text nullable | `reel` / `feed` / `story`（未指定可） |
+| file_name | text nullable | |
+| drive_file_id | text | |
+| drive_url | text | |
+| memo | text nullable | |
+| uploaded_by_staff_id | uuid FK staff | |
+| created_at | timestamptz | |
+
+Driveフォルダは既存の `resolveClientFolder` を `folderHint: "制作動画"` で再利用し、
+`{root}/{client_code}_{company_name}/制作動画/` 配下にフラットに保存する（素材のような
+日付/submission単位のサブフォルダは作らない）。フォルダIDはこのテーブルには保存せず、
+必要な画面（顧客詳細「制作動画」タブ・制作動画ページの「まとめて開く」）で都度
+`resolveClientFolder` 相当の解決を行う（冪等・既存パターンと同じコスト）。
+
+---
+
 ## reminder_logs
 
 | column | type |

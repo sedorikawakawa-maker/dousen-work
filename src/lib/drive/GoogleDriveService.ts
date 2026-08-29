@@ -4,6 +4,7 @@ import type {
   DriveService,
   DriveUploadInput,
   DriveUploadResult,
+  ResolveFolderInput,
   ResolveMaterialSubmissionFolderInput,
   UploadToResolvedFolderInput,
 } from "./DriveService";
@@ -152,6 +153,60 @@ export class GoogleDriveService implements DriveService {
 
     try {
       return await uploadFileToFolder(drive, { file: input.file, folderId: input.folderId });
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+  }
+
+  /**
+   * {root}/{client_code}_{company_name}/{folderHint}/ を解決するだけ（アップロードしない）。
+   * resolveClientFolder自体はfinal/outsourcingと共通で、folderHintが同じなら同じフォルダを再利用する。
+   */
+  async resolveFolder(input: ResolveFolderInput): Promise<DriveFolderRef> {
+    const row = await getDriveIntegrationRow();
+    if (!row || row.status !== "connected" || !row.refresh_token_encrypted) {
+      throw new Error("Google Driveが連携されていません。管理者にご連絡ください。");
+    }
+    if (!row.root_folder_id) {
+      throw new Error("Google Driveの保存先フォルダが設定されていません。管理者にご連絡ください。");
+    }
+
+    const refreshToken = await getDecryptedRefreshToken();
+    if (!refreshToken) {
+      throw new Error("Google Drive連携が無効です。管理者にご連絡ください。");
+    }
+
+    let drive;
+    try {
+      const authClient = await createAuthorizedClient(refreshToken);
+      drive = getDriveClient(authClient);
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+
+    let resolvedClientCode = "unknown";
+    let companyName = input.clientId;
+    if (UUID_PATTERN.test(input.clientId)) {
+      const admin = createSupabaseAdminClient();
+      const { data: client } = await admin
+        .from("clients")
+        .select("client_code, company_name")
+        .eq("id", input.clientId)
+        .maybeSingle();
+      if (client) {
+        resolvedClientCode = client.client_code;
+        companyName = client.company_name;
+      }
+    }
+
+    try {
+      const folderId = await resolveClientFolder(drive, {
+        rootFolderId: row.root_folder_id,
+        clientCode: resolvedClientCode,
+        companyName,
+        folderHint: input.folderHint,
+      });
+      return { folderId, folderUrl: `https://drive.google.com/drive/folders/${folderId}` };
     } catch (err) {
       throw new Error(describeGoogleError(err));
     }

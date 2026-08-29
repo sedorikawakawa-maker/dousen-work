@@ -41,6 +41,7 @@ function buildNavGroups(role: StaffRole): NavGroup[] {
       title: "業務",
       items: [
         { href: "/post-records", label: "投稿履歴" },
+        { href: "/production-videos", label: "制作動画" },
         { href: "/outsourcing", label: "外注管理" },
         { href: "/reminders", label: "催促一覧", subtle: true },
       ],
@@ -82,16 +83,19 @@ function isActive(pathname: string, href: string): boolean {
 export function Sidebar({
   role,
   unreadCount,
+  wcheckNewCount,
   onLogout,
 }: {
   role: StaffRole;
   unreadCount: number;
+  wcheckNewCount: number;
   onLogout: () => void | Promise<void>;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const groups = buildNavGroups(role);
   const unreadBadge = unreadCount > 99 ? "99+" : String(unreadCount);
+  const wcheckNewBadge = wcheckNewCount > 99 ? "99+" : String(wcheckNewCount);
 
   function closeMobileMenu() {
     setMobileOpen(false);
@@ -147,6 +151,10 @@ export function Sidebar({
                     {item.href === "/notifications" && unreadCount > 0 ? (
                       <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
                         {unreadBadge}
+                      </span>
+                    ) : item.href === "/wchecks" && wcheckNewCount > 0 ? (
+                      <span className="rounded-full bg-[var(--accent-soft-bg)] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[var(--accent-soft-text)]">
+                        {wcheckNewBadge}
                       </span>
                     ) : null}
                   </Link>

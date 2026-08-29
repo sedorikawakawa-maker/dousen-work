@@ -669,6 +669,48 @@ export interface Database {
         >;
         Relationships: [];
       };
+      wcheck_list_views: {
+        Row: {
+          staff_id: string;
+          last_viewed_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["wcheck_list_views"]["Row"],
+          "created_at" | "updated_at"
+        > & {
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["wcheck_list_views"]["Insert"]>;
+        Relationships: [];
+      };
+      production_videos: {
+        Row: {
+          id: string;
+          client_id: string;
+          post_type: PostType | null;
+          file_name: string | null;
+          drive_file_id: string;
+          drive_url: string;
+          memo: string | null;
+          uploaded_by_staff_id: string;
+          created_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["production_videos"]["Row"],
+          "id" | "post_type" | "file_name" | "memo" | "created_at"
+        > & {
+          id?: string;
+          post_type?: PostType | null;
+          file_name?: string | null;
+          memo?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["production_videos"]["Insert"]>;
+        Relationships: [];
+      };
       internal_tasks: {
         Row: {
           id: string;

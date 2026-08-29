@@ -12,6 +12,32 @@ export interface PendingWCheckItem {
   task: ProductionTaskRow;
 }
 
+/**
+ * Sidebarの「Wチェック待ち」新着バッジ用件数。notificationsの未読管理とは役割を分ける。
+ * 「誰でもWチェック可能」なため、他staffが/wchecksを開いても自分のバッジは消えない
+ * （wcheck_list_viewsはstaff_id単位で1行ずつ保持）。
+ * 一覧を一度も開いたことがないstaff（wcheck_list_viewsに行が無い）は、既存の待ち行列を
+ * まとめて「新着」表示しないよう新着0件として扱う。
+ */
+export async function countNewWChecksForStaff(supabase: TypedClient, staffId: string): Promise<number> {
+  const { data: view } = await supabase
+    .from("wcheck_list_views")
+    .select("last_viewed_at")
+    .eq("staff_id", staffId)
+    .maybeSingle();
+
+  if (!view) return 0;
+
+  const { count, error } = await supabase
+    .from("w_checks")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "waiting")
+    .gt("requested_at", view.last_viewed_at);
+
+  if (error) throw error;
+  return count ?? 0;
+}
+
 /** 現在Wチェック待ち(status=waiting)の一覧を、紐づくタスク情報とあわせて取得する。 */
 export async function listPendingWChecksWithTasks(
   supabase: TypedClient,

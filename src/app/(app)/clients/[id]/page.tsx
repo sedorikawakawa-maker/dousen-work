@@ -8,6 +8,7 @@ import {
   CONTRACT_STATUS_LABELS,
   LINK_TYPE_LABELS,
   POST_TYPE_LABELS,
+  POST_TYPE_OPTIONS,
   PRODUCTION_TASK_STATUS_LABELS,
   postUsageLabel,
 } from "@/lib/clients/labels";
@@ -24,12 +25,16 @@ import { listClientConfirmationsForClient } from "@/lib/clientConfirmations/quer
 import { CLIENT_CONFIRMATION_STATUS_LABELS } from "@/lib/clientConfirmations/labels";
 import { listPostRecordsForClient, listRecentlyCompletedTasks } from "@/lib/postRecords/queries";
 import { cancelPostRecordAction } from "@/app/(app)/post-records/actions";
+import { addProductionVideoAction } from "@/app/(app)/production-videos/actions";
+import { listProductionVideosForClient, type ProductionVideoRow } from "@/lib/productionVideos/queries";
+import { resolveProductionVideoFolder } from "@/lib/productionVideos/upload";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { UrgencyBadge } from "@/components/UrgencyBadge";
 import { PageContainer } from "@/components/PageContainer";
 import { ClientAvatar } from "@/components/ClientAvatar";
+import { SubmitButton } from "@/components/SubmitButton";
 import {
   addMaterialAction,
   issueMaterialFormTokenAction,
@@ -46,6 +51,7 @@ const TABS = [
   { key: "schedule", label: "投稿スケジュール" },
   { key: "consumption", label: "運用・消化" },
   { key: "materials", label: "素材" },
+  { key: "productionVideos", label: "制作動画" },
   { key: "posts", label: "投稿履歴" },
   { key: "confirmations", label: "顧客確認履歴" },
   { key: "links", label: "SNS・リンク" },
@@ -59,7 +65,7 @@ type TabKey = (typeof TABS)[number]["key"];
 const TAB_GROUPS: { label: string; keys: TabKey[] }[] = [
   { label: "基本", keys: ["overview", "contract"] },
   { label: "制作・運用", keys: ["profile", "schedule", "consumption"] },
-  { label: "やり取り", keys: ["materials", "posts", "confirmations"] },
+  { label: "やり取り", keys: ["materials", "productionVideos", "posts", "confirmations"] },
   { label: "参照情報", keys: ["links", "credentials", "history"] },
 ];
 
@@ -130,6 +136,23 @@ export default async function ClientDetailPage({
   let confirmations: Awaited<ReturnType<typeof listClientConfirmationsForClient>> = [];
   if (activeTab === "confirmations") {
     confirmations = await listClientConfirmationsForClient(supabase, id);
+  }
+
+  let productionVideos: ProductionVideoRow[] = [];
+  let productionVideoFolderUrl: string | null = null;
+  if (activeTab === "productionVideos") {
+    productionVideos = await listProductionVideosForClient(supabase, id);
+    // フォルダの解決はこのタブを開いたときだけ、かつ既に1件以上動画がある場合のみ行う。
+    // 0件の顧客で毎回resolveすると「見ただけ」でDrive側に空の制作動画フォルダを
+    // 作ってしまう（findOrCreateFolderは無ければ作成するため）ので、それを避ける。
+    if (productionVideos.length > 0) {
+      try {
+        const folder = await resolveProductionVideoFolder(id);
+        productionVideoFolderUrl = folder.folderUrl;
+      } catch {
+        productionVideoFolderUrl = null;
+      }
+    }
   }
 
   let postRecords: Awaited<ReturnType<typeof listPostRecordsForClient>> = [];
@@ -699,6 +722,116 @@ export default async function ClientDetailPage({
               >
                 登録する
               </button>
+            </form>
+          </div>
+        ) : null}
+
+        {activeTab === "productionVideos" ? (
+          <div className="flex flex-col gap-6">
+            {saved ? (
+              <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">
+                アップロードしました。
+              </p>
+            ) : null}
+            {error ? (
+              <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            ) : null}
+
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-neutral-500">
+                完成した納品用・投稿用動画の保管庫です。制作途中の動画や投稿完了フローとは連動しません。
+              </p>
+              {productionVideoFolderUrl ? (
+                <a
+                  href={productionVideoFolderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0 text-xs underline"
+                >
+                  Google Driveでまとめて開く
+                </a>
+              ) : null}
+            </div>
+
+            <ul className="flex flex-col gap-2 text-sm">
+              {productionVideos.map((video) => (
+                <li
+                  key={video.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-neutral-200 px-3 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="font-medium">{video.file_name ?? "（ファイル名不明）"}</span>
+                      {video.post_type ? (
+                        <span className="text-xs text-neutral-500">{POST_TYPE_LABELS[video.post_type]}</span>
+                      ) : null}
+                    </div>
+                    <p className="text-xs text-neutral-500">
+                      <span className="font-medium tabular-nums">
+                        {new Date(video.created_at).toLocaleString("ja-JP")}
+                      </span>{" "}
+                      / {staffNameById.get(video.uploaded_by_staff_id) ?? "不明"}
+                    </p>
+                    {video.memo ? <p className="mt-0.5 text-xs text-neutral-600">メモ: {video.memo}</p> : null}
+                  </div>
+                  <a href={video.drive_url} target="_blank" rel="noreferrer" className="shrink-0 text-xs underline">
+                    Driveで開く
+                  </a>
+                </li>
+              ))}
+              {productionVideos.length === 0 ? (
+                <li className="text-neutral-400">登録済みの制作動画はありません。</li>
+              ) : null}
+            </ul>
+
+            <form
+              action={addProductionVideoAction}
+              className="flex flex-col gap-3 border-t border-neutral-100 pt-4"
+            >
+              <input type="hidden" name="clientId" value={id} />
+              <input type="hidden" name="returnTo" value={`/clients/${id}?tab=productionVideos`} />
+              <h3 className="text-sm font-semibold text-neutral-700">制作動画をアップロード</h3>
+              <label className="text-sm font-medium text-neutral-700">
+                ファイル（複数選択可）
+                <input
+                  name="files"
+                  type="file"
+                  multiple
+                  required
+                  accept="video/*"
+                  className="mt-1.5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm font-medium text-neutral-700">
+                投稿種別（任意）
+                <select
+                  name="postType"
+                  defaultValue=""
+                  className="mt-1.5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
+                >
+                  <option value="">未指定</option>
+                  {POST_TYPE_OPTIONS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-medium text-neutral-700">
+                メモ（任意）
+                <textarea
+                  name="memo"
+                  rows={2}
+                  className="mt-1.5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
+                />
+              </label>
+              <DriveMockNotice />
+              <SubmitButton
+                pendingText="アップロード中..."
+                className="mt-1 w-full rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
+              >
+                アップロードする
+              </SubmitButton>
             </form>
           </div>
         ) : null}
