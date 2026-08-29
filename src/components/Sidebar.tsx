@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { canAccessManagementFeatures, canManageStaff } from "@/lib/auth/roles";
 import type { StaffRole } from "@/lib/supabase/database.types";
+import { useStaffPresence, StaffPresenceRosterView } from "@/components/StaffPresence";
+import type { StaffPresenceRosterItem } from "@/lib/presence/queries";
 
 interface NavItem {
   href: string;
@@ -83,19 +85,29 @@ function isActive(pathname: string, href: string): boolean {
 export function Sidebar({
   role,
   unreadCount,
-  wcheckNewCount,
+  wcheckWaitingCount,
+  staffPresenceRoster,
+  currentStaffId,
+  currentStaffName,
   onLogout,
 }: {
   role: StaffRole;
   unreadCount: number;
-  wcheckNewCount: number;
+  wcheckWaitingCount: number;
+  staffPresenceRoster: StaffPresenceRosterItem[];
+  currentStaffId: string;
+  currentStaffName: string;
   onLogout: () => void | Promise<void>;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const groups = buildNavGroups(role);
   const unreadBadge = unreadCount > 99 ? "99+" : String(unreadCount);
-  const wcheckNewBadge = wcheckNewCount > 99 ? "99+" : String(wcheckNewCount);
+  const wcheckWaitingBadge = wcheckWaitingCount > 99 ? "99+" : String(wcheckWaitingCount);
+  // navBodyはPC用asideとモバイルドロワー用asideの2箇所に描画されるため、Presenceの
+  // WebSocket接続(副作用)はnavBodyの中ではなくここで1回だけ持つ。navBody内には
+  // 結果を渡すだけの表示専用コンポーネントを置く。
+  const staffPresence = useStaffPresence({ currentStaffId, currentStaffName });
 
   function closeMobileMenu() {
     setMobileOpen(false);
@@ -152,9 +164,9 @@ export function Sidebar({
                       <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
                         {unreadBadge}
                       </span>
-                    ) : item.href === "/wchecks" && wcheckNewCount > 0 ? (
-                      <span className="rounded-full bg-[var(--accent-soft-bg)] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[var(--accent-soft-text)]">
-                        {wcheckNewBadge}
+                    ) : item.href === "/wchecks" && wcheckWaitingCount > 0 ? (
+                      <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+                        {wcheckWaitingBadge}
                       </span>
                     ) : null}
                   </Link>
@@ -164,6 +176,12 @@ export function Sidebar({
           </div>
         ))}
       </div>
+
+      <StaffPresenceRosterView
+        roster={staffPresenceRoster}
+        currentStaffId={currentStaffId}
+        presence={staffPresence}
+      />
 
       <div className="mt-6 flex flex-col gap-0.5 border-t border-neutral-800 pt-4">
         <p className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">自分</p>

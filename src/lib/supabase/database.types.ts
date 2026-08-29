@@ -669,21 +669,16 @@ export interface Database {
         >;
         Relationships: [];
       };
-      wcheck_list_views: {
+      staff_presence: {
         Row: {
           staff_id: string;
-          last_viewed_at: string;
+          last_seen_at: string;
           created_at: string;
-          updated_at: string;
         };
-        Insert: Omit<
-          Database["public"]["Tables"]["wcheck_list_views"]["Row"],
-          "created_at" | "updated_at"
-        > & {
+        Insert: Omit<Database["public"]["Tables"]["staff_presence"]["Row"], "created_at"> & {
           created_at?: string;
-          updated_at?: string;
         };
-        Update: Partial<Database["public"]["Tables"]["wcheck_list_views"]["Insert"]>;
+        Update: Partial<Database["public"]["Tables"]["staff_presence"]["Insert"]>;
         Relationships: [];
       };
       production_videos: {

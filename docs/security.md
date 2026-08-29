@@ -37,6 +37,26 @@ Supabase Auth。
 OAuth token / refresh token はサーバー側のみ。
 ブラウザへ露出させない。
 
+## Realtime Presence（稼働状況）
+
+`staff-presence` トピックのみを対象に、`realtime.messages` へRLSポリシーを追加し、
+active staff以外（未ログイン・inactive）がpresenceの読み書きに参加できないようにする。
+channelは必ず `private: true` で作成し、公開アクセスに依存しない。
+Presence payloadに email・synthetic email・auth_user_id等の秘匿情報は含めない
+（staff_id・display_nameのみ）。実機で未認証・inactive staffとも参加不可であることを確認済み。
+
+**read側でbroadcast拡張も許可している理由**: presence専用チャンネルであっても、
+channel join時の認可チェック自体がbroadcast拡張への読み取り可否も評価するため
+（実機で確認済み。read側を`extension = 'presence'`のみに絞ると、認証済みactive
+staffでもjoinそのものが拒否された。Supabase公式の実装例でも同様にread側は
+`extension in ('broadcast', 'presence')`としている）。**write(insert)側は
+`extension = 'presence'`のみに絞っており、broadcast writeは許可していない**
+（実機で、認証済みstaffがこのトピックへ`channel.send({type:'broadcast',...})`
+してもack無しでタイムアウトし、実際には送信できないことを確認済み）。
+トピックを`staff-presence`一つに固定しているため万一broadcast readが悪用されても
+影響範囲は同じ社内staffが集まる稼働状況チャンネル内に限られ、かつアプリ側は
+このトピックでbroadcastイベントを一切購読していないため実害はないと判断した。
+
 ## 操作履歴
 
 以下は activity_logs:

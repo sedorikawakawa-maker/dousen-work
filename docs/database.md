@@ -27,6 +27,24 @@
 
 ---
 
+## staff_presence
+
+スタッフの「稼働状況」表示専用。オンライン/オフライン自体はSupabase Realtime Presence
+（DB非経由・揮発性）で判定し、このテーブルはオフラインstaffの「最終アクセス」表示にのみ使う。
+1スタッフ1行（履歴テーブルではない）。ログイン履歴（`staff.last_login_at`）とは別物。
+
+| column | type | note |
+|---|---|---|
+| staff_id | uuid PK, FK staff | |
+| last_seen_at | timestamptz | |
+| created_at | timestamptz | |
+
+更新タイミング: Presence接続成功時、およびタブがvisibleな間だけ約5分間隔（バックグラウンド中は停止、
+再visible化時に即時1回）。認証済みのSupabase browser clientから本人の行のみ直接UPSERTする
+（RLSで他人の行は書き換え不可）。毎秒更新のような高頻度書き込みは行わない。
+
+---
+
 ## clients
 
 | column | type | note |
@@ -240,6 +258,10 @@ instagram, tiktok, youtube, website, drive_root, canva_feed, canva_story, canva_
 再登録時は新しい w_checks 行を作成して履歴保持。
 差し戻し回数をUI集計する必要はない。
 
+Sidebarの「Wチェック待ち」バッジは `status = 'waiting'` の現在件数をそのまま表示する
+（`listPendingWChecksWithTasks` と同じ条件）。staff別の既読管理は行わない
+（誰でもWチェック可能な共通キューのため、全staff共通の残件数のみで十分と判断）。
+
 ---
 
 ## client_confirmations
@@ -343,25 +365,6 @@ instagram, tiktok, youtube, website, drive_root, canva_feed, canva_story, canva_
 | entity_id | uuid nullable |
 | is_read | boolean |
 | created_at | timestamptz |
-
----
-
-## wcheck_list_views
-
-スタッフごとの「Wチェック待ち一覧を最後に開いた時刻」。Sidebarの新着バッジ判定専用
-（notificationsの既読管理とは役割を分ける）。1スタッフ1行。
-
-| column | type | note |
-|---|---|---|
-| staff_id | uuid PK, FK staff | |
-| last_viewed_at | timestamptz | |
-| created_at | timestamptz | |
-| updated_at | timestamptz | |
-
-新着判定: `w_checks.status = 'waiting' AND w_checks.requested_at > (自分のlast_viewed_at)`。
-行が存在しないスタッフ（一覧を一度も開いていない）は新着0件として扱い、既存の待ち行列を
-一括で「新着」表示しない。`/wchecks` を開いたタイミングで専用Server Actionから
-upsertする（Server Componentのレンダリング内では更新しない）。
 
 ---
 

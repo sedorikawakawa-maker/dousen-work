@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { assetTypeForPostType } from "@/lib/wchecks/labels";
@@ -233,6 +234,9 @@ export async function approveWCheckAction(formData: FormData) {
     });
   }
 
+  // Sidebarの「Wチェック待ち」バッジ(全staff共通の現在件数)がリロードなしで減るよう、
+  // 共有layoutを再検証する。
+  revalidatePath("/", "layout");
   redirect(`${returnTo}?saved=1`);
 }
 
@@ -283,6 +287,9 @@ export async function requestWCheckRevisionAction(formData: FormData) {
     });
   }
 
+  // Sidebarの「Wチェック待ち」バッジ(全staff共通の現在件数)がリロードなしで減るよう、
+  // 共有layoutを再検証する。
+  revalidatePath("/", "layout");
   redirect(`${returnTo}?saved=1`);
 }
 

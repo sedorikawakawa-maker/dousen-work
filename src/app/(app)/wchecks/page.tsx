@@ -12,7 +12,6 @@ import { UrgencyBadge } from "@/components/UrgencyBadge";
 import { ClientAvatar } from "@/components/ClientAvatar";
 import type { UrgencyLevel } from "@/lib/clients/statusStyles";
 import { approveWCheckAction, requestWCheckRevisionAction } from "../tasks/[taskId]/actions";
-import { MarkWCheckListViewed } from "./MarkWCheckListViewed";
 
 function dueUrgency(dueDate: string | null, today: string): "overdue" | "due_today" | null {
   if (!dueDate) return null;
@@ -69,7 +68,6 @@ export default async function WChecksPage({
 
   return (
     <PageContainer className="gap-6 bg-neutral-50 py-6 sm:py-8">
-      <MarkWCheckListViewed />
       <div>
         <Link href="/" className="text-sm text-neutral-500">
           ← ダッシュボードに戻る
