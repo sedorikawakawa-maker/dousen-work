@@ -186,13 +186,16 @@ export default async function HomePage({
         {/* 左カラム */}
         <div className="flex min-w-0 flex-col gap-6 lg:gap-5">
           {/* 1. 今日やること */}
-          <section className="rounded-3xl border border-[var(--accent-soft-bg)] bg-gradient-to-br from-[var(--accent-soft-bg)] to-white p-4 lg:p-5">
-            <h2 className="text-lg font-semibold text-neutral-900">今日やること</h2>
-            <p className="mt-1 text-sm text-neutral-600">
-              優先度の高い順に並んでいます。上のカードから対応してください。
-            </p>
-
-            <div className="mt-4 grid grid-cols-3 gap-2">
+          <SectionShell
+            tone="accent"
+            title="今日やること"
+            subtitle={
+              <p className="mt-1 text-sm text-neutral-600">
+                優先度の高い順に並んでいます。上のカードから対応してください。
+              </p>
+            }
+          >
+            <div className="grid grid-cols-3 gap-2">
               <SummaryChip label="今日やること" count={todayActionItems.length} tone="accent" />
               <SummaryChip label="最優先" count={mostUrgentCount} tone="urgent" />
               <SummaryChip label="要対応" count={needsAttentionCount} tone="warning" />
@@ -284,11 +287,10 @@ export default async function HomePage({
                 </p>
               ) : null}
             </div>
-          </section>
+          </SectionShell>
 
           {/* 3. スケジュール（担当顧客の投稿予定・自分担当の社内タスク締切を月単位で確認） */}
-          <section className="rounded-2xl border border-neutral-200 bg-white p-4 lg:p-5">
-            <h2 className="mb-3 text-lg font-semibold text-neutral-900">スケジュール</h2>
+          <SectionShell tone="neutral" title="スケジュール">
             <DashboardCalendar
               key={`${displayMonth.year}-${displayMonth.month0}`}
               year={displayMonth.year}
@@ -299,32 +301,33 @@ export default async function HomePage({
               nextMonthHref={monthHref(nextMonth)}
               todayMonthHref={monthHref(thisMonth)}
             />
-          </section>
+          </SectionShell>
         </div>
 
         {/* 右カラム */}
         <div className="flex min-w-0 flex-col gap-6 lg:gap-5">
           {/* 2. 要対応 */}
-          <section className="rounded-2xl border border-neutral-200 bg-white p-4 lg:p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-neutral-900">要対応</h2>
-                <p className="mt-0.5 text-xs text-neutral-500">
-                  複数日にわたり滞留している、自分に関係する案件です。
-                </p>
-              </div>
+          <SectionShell
+            tone="warning"
+            title="要対応"
+            subtitle={
+              <p className="mt-0.5 text-xs text-neutral-500">
+                複数日にわたり滞留している、自分に関係する案件です。
+              </p>
+            }
+            right={
               <Link href="/reminders" className="whitespace-nowrap text-xs font-medium text-neutral-500 underline">
                 催促一覧を見る
               </Link>
-            </div>
-
-            <div className="mt-3 flex flex-col gap-2.5">
+            }
+          >
+            <div className="flex flex-col gap-2.5">
               {personalInterventions.map((item) => (
                 <InterventionCard key={item.key} item={item} />
               ))}
 
               {personalShortfalls.length > 0 ? (
-                <div className="flex flex-col gap-2 rounded-2xl border border-neutral-200 p-3.5">
+                <div className="flex flex-col gap-2 rounded-2xl border border-neutral-200 bg-white p-3.5">
                   <p className="text-xs font-semibold text-neutral-500">前月未達・持越し</p>
                   {personalShortfalls.map((row) => {
                     const [year, month] = row.sourceMonth.split("-");
@@ -361,23 +364,22 @@ export default async function HomePage({
                 </p>
               ) : null}
             </div>
-          </section>
+          </SectionShell>
 
           {/* 1.5 担当社内タスク（期限超過・今日締切・priority Aは上の「今日やること」側に既出のため、ここでは重複除外済み） */}
-          <section className="rounded-2xl border border-neutral-200 bg-white p-4 lg:p-5">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-neutral-900">
-                担当社内タスク（{remainingInternalTasks.length}件）
-              </h2>
+          <SectionShell
+            tone="info"
+            title={`担当社内タスク（${remainingInternalTasks.length}件）`}
+            right={
               <Link
                 href="/internal-tasks?scope=mine"
                 className="whitespace-nowrap text-xs font-medium text-neutral-500 underline"
               >
                 社内タスク一覧を見る
               </Link>
-            </div>
-
-            <div className="mt-3 flex flex-col gap-2.5">
+            }
+          >
+            <div className="flex flex-col gap-2.5">
               {visibleInternalTasks.map((task) => (
                 <InternalTaskCard
                   key={task.id}
@@ -392,16 +394,12 @@ export default async function HomePage({
                 </p>
               ) : null}
             </div>
-          </section>
+          </SectionShell>
         </div>
       </div>
 
       {/* 4. 担当顧客 */}
-      <section>
-        <h2 className="mb-3 text-lg font-semibold text-neutral-900">
-          担当顧客一覧（{dashboard.myClients.length}件）
-        </h2>
-
+      <SectionShell tone="plain" title={`担当顧客一覧（${dashboard.myClients.length}件）`}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {dashboard.myClients.map((client) => (
             <div
@@ -459,39 +457,89 @@ export default async function HomePage({
             </p>
           ) : null}
         </div>
-      </section>
+      </SectionShell>
 
       {/* 5. 補助情報 */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <AlertSection title="新着素材" count={dashboard.newMaterials.length} tone="neutral">
-          <ul className="flex flex-col gap-2 text-sm">
-            {dashboard.newMaterials.map((m) => (
-              <li key={m.id}>
-                <Link href={`/clients/${m.client_id}?tab=materials`} className="hover:underline">
-                  {clientNameById.get(m.client_id) ?? "不明な顧客"} / {m.title}
-                </Link>
-                <span className="ml-2 text-xs font-medium tabular-nums text-neutral-500">
-                  {new Date(m.received_at).toLocaleDateString("ja-JP")}
-                </span>
-              </li>
-            ))}
-            {dashboard.newMaterials.length === 0 ? (
-              <li className="text-neutral-400">新着素材はありません。</li>
-            ) : null}
-          </ul>
-        </AlertSection>
-
-        {canSeeUnassignedWarning ? (
-          <AlertSection title="未割当タスクの警告" count={dashboard.unassignedTasks.length} tone="warning">
-            <TaskList
-              tasks={dashboard.unassignedTasks}
-              clientNameById={clientNameById}
-              emptyText="未割当のタスクはありません。"
-            />
+      <SectionShell tone="neutral" title="補助情報">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <AlertSection title="新着素材" count={dashboard.newMaterials.length} tone="neutral">
+            <ul className="flex flex-col gap-2 text-sm">
+              {dashboard.newMaterials.map((m) => (
+                <li key={m.id}>
+                  <Link href={`/clients/${m.client_id}?tab=materials`} className="hover:underline">
+                    {clientNameById.get(m.client_id) ?? "不明な顧客"} / {m.title}
+                  </Link>
+                  <span className="ml-2 text-xs font-medium tabular-nums text-neutral-500">
+                    {new Date(m.received_at).toLocaleDateString("ja-JP")}
+                  </span>
+                </li>
+              ))}
+              {dashboard.newMaterials.length === 0 ? (
+                <li className="text-neutral-400">新着素材はありません。</li>
+              ) : null}
+            </ul>
           </AlertSection>
-        ) : null}
-      </div>
+
+          {canSeeUnassignedWarning ? (
+            <AlertSection title="未割当タスクの警告" count={dashboard.unassignedTasks.length} tone="warning">
+              <TaskList
+                tasks={dashboard.unassignedTasks}
+                clientNameById={clientNameById}
+                emptyText="未割当のタスクはありません。"
+              />
+            </AlertSection>
+          ) : null}
+        </div>
+      </SectionShell>
     </PageContainer>
+  );
+}
+
+const SECTION_TONE = {
+  // 今日やること: 既存の淡いグリーンアクセント（--accent系）をそのまま利用。
+  accent: { section: "border-[var(--accent-soft-bg)] bg-[var(--accent-soft-bg)]", bar: "bg-[var(--accent)]" },
+  // 要対応: 既存のUrgencyBadge/警告表現と同じamber系。
+  warning: { section: "border-amber-200 bg-amber-50", bar: "bg-amber-400" },
+  // 担当社内タスク: DashboardCalendarの社内タスクイベントと同じsky系（意味的にも一致）。
+  info: { section: "border-sky-200 bg-sky-50", bar: "bg-sky-400" },
+  // スケジュール・補助情報: 控えめなグレー系。
+  neutral: { section: "border-neutral-200 bg-neutral-50", bar: "bg-neutral-300" },
+  // 担当顧客一覧: 白ベース＋やや強めのborderで領域を明示。
+  plain: { section: "border-neutral-300 bg-white", bar: "bg-neutral-300" },
+} as const;
+
+/**
+ * ダッシュボードの各セクションを「外側=淡い背景色の領域」「内側=白いカード」の
+ * 二階層で見せるための共通シェル。見出し帯（下線＋左アクセントライン）で
+ * セクションの開始位置を明確にする。業務ロジックは一切持たない表示専用。
+ */
+function SectionShell({
+  tone,
+  title,
+  subtitle,
+  right,
+  children,
+}: {
+  tone: keyof typeof SECTION_TONE;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  right?: ReactNode;
+  children: ReactNode;
+}) {
+  const toneClass = SECTION_TONE[tone];
+
+  return (
+    <section className={`rounded-2xl border ${toneClass.section}`}>
+      <div className="flex items-start gap-3 border-b border-black/[0.06] px-4 py-3 lg:px-5">
+        <span className={`mt-1.5 h-4 w-1 shrink-0 rounded-full ${toneClass.bar}`} aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-semibold text-neutral-900">{title}</h2>
+          {subtitle}
+        </div>
+        {right ? <div className="shrink-0">{right}</div> : null}
+      </div>
+      <div className="p-4 lg:p-5">{children}</div>
+    </section>
   );
 }
 
