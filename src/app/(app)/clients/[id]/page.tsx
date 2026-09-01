@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getClientDetail, listActiveStaff, listUpcomingProductionTasks } from "@/lib/clients/queries";
+import {
+  getClientDetail,
+  listActiveStaff,
+  listClientLoginStaffForClient,
+  listUpcomingProductionTasks,
+  type ClientLoginStaffEntry,
+} from "@/lib/clients/queries";
 import {
   ASSIGNMENT_TYPE_LABELS,
   CLIENT_CURRENT_STATUS_LABELS,
@@ -153,6 +159,11 @@ export default async function ClientDetailPage({
         productionVideoFolderUrl = null;
       }
     }
+  }
+
+  let loginStaff: ClientLoginStaffEntry[] = [];
+  if (activeTab === "credentials") {
+    loginStaff = await listClientLoginStaffForClient(supabase, id);
   }
 
   let postRecords: Awaited<ReturnType<typeof listPostRecordsForClient>> = [];
@@ -983,27 +994,53 @@ export default async function ClientDetailPage({
         ) : null}
 
         {activeTab === "credentials" ? (
-          <ul className="flex flex-col gap-2 text-sm">
-            {detail.credentials.map((c) => (
-              <li key={c.id}>
-                <strong>{c.service_name}</strong>
-                {c.login_id ? ` / ID: ${c.login_id}` : ""}
-                {c.password_vault_url ? (
-                  <>
-                    {" / 保管先: "}
-                    <a href={c.password_vault_url} target="_blank" rel="noreferrer" className="underline">
-                      リンク
-                    </a>
-                  </>
-                ) : (
-                  " / 保管先: —"
-                )}
-              </li>
-            ))}
-            {detail.credentials.length === 0 ? (
-              <li className="text-neutral-400">登録済みのログイン情報はありません。</li>
-            ) : null}
-          </ul>
+          <div className="flex flex-col gap-6">
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">ログイン者</h3>
+              <p className="mb-2 text-xs text-neutral-500">
+                この顧客のSNS等アカウントへログインできるスタッフです（主担当・副担当とは別の情報です）。
+              </p>
+              {loginStaff.length > 0 ? (
+                <ul className="flex flex-wrap gap-1.5">
+                  {loginStaff.map((s) => (
+                    <li
+                      key={s.staffId}
+                      className={`rounded-full px-2.5 py-1 text-xs ${
+                        s.isActive ? "bg-neutral-100 text-neutral-700" : "bg-neutral-100 text-neutral-400"
+                      }`}
+                    >
+                      {s.name}
+                      {!s.isActive ? "（無効）" : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-neutral-400">ログイン者は未設定です。</p>
+              )}
+            </div>
+
+            <ul className="flex flex-col gap-2 border-t border-neutral-100 pt-4 text-sm">
+              {detail.credentials.map((c) => (
+                <li key={c.id}>
+                  <strong>{c.service_name}</strong>
+                  {c.login_id ? ` / ID: ${c.login_id}` : ""}
+                  {c.password_vault_url ? (
+                    <>
+                      {" / 保管先: "}
+                      <a href={c.password_vault_url} target="_blank" rel="noreferrer" className="underline">
+                        リンク
+                      </a>
+                    </>
+                  ) : (
+                    " / 保管先: —"
+                  )}
+                </li>
+              ))}
+              {detail.credentials.length === 0 ? (
+                <li className="text-neutral-400">登録済みのログイン情報はありません。</li>
+              ) : null}
+            </ul>
+          </div>
         ) : null}
 
         {activeTab === "history" ? (

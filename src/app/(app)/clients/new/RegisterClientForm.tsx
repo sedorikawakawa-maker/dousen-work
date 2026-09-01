@@ -86,6 +86,28 @@ export function RegisterClientForm({ staffOptions }: { staffOptions: StaffOption
             ))}
           </select>
         </label>
+
+        <fieldset>
+          <legend className="text-sm font-medium text-neutral-700">
+            ログイン者（任意・複数選択可）
+          </legend>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            この顧客のSNS等アカウントへログインできるスタッフです。主担当・副担当とは別に設定します。
+          </p>
+          <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+            {staffOptions.map((staff) => (
+              <label key={staff.id} className="flex items-center gap-1.5 text-sm text-neutral-700">
+                <input
+                  type="checkbox"
+                  name="loginStaffIds"
+                  value={staff.id}
+                  className="h-4 w-4 rounded border-neutral-300"
+                />
+                {staff.last_name} {staff.first_name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
       </FormSection>
 
       <FormSection title="備考">

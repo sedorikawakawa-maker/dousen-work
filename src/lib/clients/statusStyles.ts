@@ -46,7 +46,23 @@ export const STATUS_BADGE_STYLE: Record<StatusValue, StatusStyle> = {
   // 契約ステータス(ContractStatus)。pausedはClientCurrentStatusのpausedと共通の色を使う。
   contracted: { bg: "bg-green-100", text: "text-green-700" },
   proposal: { bg: "bg-amber-100", text: "text-amber-700" },
+  contract_preparation: { bg: "bg-yellow-100", text: "text-yellow-800" },
+  lost: { bg: "bg-neutral-200", text: "text-neutral-600" },
   ended: { bg: "bg-rose-100", text: "text-rose-700" },
+};
+
+/**
+ * 顧客一覧カードの背景色（contract_status用）。現在状態(current_status)は
+ * CLIENT_STATUS_BORDER_ACCENTで左端borderに表す役割分担のため、この2つの色の
+ * 意味を混ぜないこと。ごく薄い背景＋同系色の薄いborderに留め、原色は使わない。
+ */
+export const CONTRACT_STATUS_CARD_BG: Record<ContractStatus, { bg: string; border: string }> = {
+  contracted: { bg: "bg-green-50", border: "border-green-200" },
+  proposal: { bg: "bg-blue-50", border: "border-blue-200" },
+  contract_preparation: { bg: "bg-amber-50", border: "border-amber-200" },
+  lost: { bg: "bg-neutral-100", border: "border-neutral-200" },
+  paused: { bg: "bg-neutral-50", border: "border-neutral-200" },
+  ended: { bg: "bg-neutral-100", border: "border-neutral-200" },
 };
 
 /**

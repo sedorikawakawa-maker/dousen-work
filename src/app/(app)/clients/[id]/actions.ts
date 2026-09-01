@@ -220,6 +220,62 @@ export async function updateAssignmentAction(formData: FormData) {
   redirect(editUrl(clientId, { saved: "assignment" }));
 }
 
+/**
+ * ログイン者の一括更新。現在選択されているstaff集合とDBの既存集合の差分だけを
+ * INSERT/DELETEする。途中失敗で全件消えることを避けるため、先にINSERT（新規追加分）
+ * を確定させてから、その後にDELETE（解除分）を行う順序にしている
+ * （INSERT失敗時は既存の登録に一切影響しない。DELETE失敗時も、消し漏れが残るだけで
+ * 全滅よりはるかに安全）。
+ */
+export async function updateLoginStaffAction(formData: FormData) {
+  const clientId = String(formData.get("clientId"));
+  const staff = await getCurrentStaff();
+  const supabase = await createSupabaseServerClient();
+
+  const selectedStaffIds = [...new Set(formData.getAll("loginStaffIds").map((v) => String(v)))];
+
+  const { data: currentRows, error: fetchError } = await supabase
+    .from("client_login_staff")
+    .select("staff_id")
+    .eq("client_id", clientId);
+
+  if (fetchError) {
+    redirect(editUrl(clientId, { error: fetchError.message, section: "loginStaff" }));
+  }
+
+  const currentStaffIds = new Set((currentRows ?? []).map((r) => r.staff_id));
+  const selectedSet = new Set(selectedStaffIds);
+
+  const toAdd = selectedStaffIds.filter((id) => !currentStaffIds.has(id));
+  const toRemove = [...currentStaffIds].filter((id) => !selectedSet.has(id));
+
+  if (toAdd.length > 0) {
+    const { error: insertError } = await supabase.from("client_login_staff").insert(
+      toAdd.map((staffId) => ({
+        client_id: clientId,
+        staff_id: staffId,
+        created_by_staff_id: staff?.id ?? null,
+      })),
+    );
+    if (insertError) {
+      redirect(editUrl(clientId, { error: insertError.message, section: "loginStaff" }));
+    }
+  }
+
+  if (toRemove.length > 0) {
+    const { error: deleteError } = await supabase
+      .from("client_login_staff")
+      .delete()
+      .eq("client_id", clientId)
+      .in("staff_id", toRemove);
+    if (deleteError) {
+      redirect(editUrl(clientId, { error: deleteError.message, section: "loginStaff" }));
+    }
+  }
+
+  redirect(editUrl(clientId, { saved: "loginStaff" }));
+}
+
 export async function updateOperationProfileAction(formData: FormData) {
   const clientId = String(formData.get("clientId"));
   const supabase = await createSupabaseServerClient();

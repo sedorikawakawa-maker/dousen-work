@@ -12,6 +12,8 @@ export interface ClientListFilters {
   contractStatus?: ContractStatus;
   /** 主担当・副担当のいずれかにこのスタッフが割り当てられている顧客のみに絞り込む。 */
   assigneeStaffId?: string;
+  /** このスタッフがログイン者として登録されている顧客のみに絞り込む。 */
+  loginStaffId?: string;
 }
 
 export async function listClients(
@@ -19,8 +21,16 @@ export async function listClients(
   filters: ClientListFilters | string = {},
 ) {
   // 既存呼び出し（第2引数に検索文字列を直接渡す）との後方互換のため、string指定も受け付ける。
-  const { q, currentStatus, contractStatus, assigneeStaffId } =
-    typeof filters === "string" ? { q: filters, currentStatus: undefined, contractStatus: undefined, assigneeStaffId: undefined } : filters;
+  const { q, currentStatus, contractStatus, assigneeStaffId, loginStaffId } =
+    typeof filters === "string"
+      ? {
+          q: filters,
+          currentStatus: undefined,
+          contractStatus: undefined,
+          assigneeStaffId: undefined,
+          loginStaffId: undefined,
+        }
+      : filters;
 
   let request = supabase
     .from("clients_view")
@@ -45,6 +55,16 @@ export async function listClients(
       .eq("staff_id", assigneeStaffId)
       .is("active_to", null);
     const clientIds = [...new Set((assignments ?? []).map((a) => a.client_id))];
+    if (clientIds.length === 0) return [];
+    request = request.in("id", clientIds);
+  }
+
+  if (loginStaffId) {
+    const { data: loginRows } = await supabase
+      .from("client_login_staff")
+      .select("client_id")
+      .eq("staff_id", loginStaffId);
+    const clientIds = [...new Set((loginRows ?? []).map((r) => r.client_id))];
     if (clientIds.length === 0) return [];
     request = request.in("id", clientIds);
   }
@@ -82,6 +102,99 @@ export async function getClientAssignmentNames(
     if (a.assignment_type === "secondary") entry.secondaryName = name;
   }
   return result;
+}
+
+/**
+ * 顧客一覧カード用に、顧客ごとのログイン者の姓一覧をまとめて引く。
+ * client_assignments系と異なり、inactiveなstaffが登録済みでも「不明」にせず
+ * 姓を表示する（一覧はコンパクト表示のため active/inactive の区別まではしない。
+ * 区別が必要な顧客詳細・編集画面は listClientLoginStaffForClient を使う）。
+ */
+export async function getClientLoginStaffNames(
+  supabase: TypedClient,
+  clientIds: string[],
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (clientIds.length === 0) return result;
+
+  const { data: rows } = await supabase
+    .from("client_login_staff")
+    .select("client_id, staff_id")
+    .in("client_id", clientIds);
+  if (!rows || rows.length === 0) return result;
+
+  const staffIds = [...new Set(rows.map((r) => r.staff_id))];
+  const { data: staffRows } = await supabase.from("staff").select("id, last_name").in("id", staffIds);
+  const lastNameById = new Map((staffRows ?? []).map((s) => [s.id, s.last_name]));
+
+  for (const row of rows) {
+    const list = result.get(row.client_id) ?? [];
+    list.push(lastNameById.get(row.staff_id) ?? "不明");
+    result.set(row.client_id, list);
+  }
+  return result;
+}
+
+export interface ClientLoginStaffEntry {
+  staffId: string;
+  name: string;
+  isActive: boolean;
+}
+
+/** 顧客詳細・編集画面用に、この顧客の現在のログイン者一覧を氏名・active状態つきで返す。 */
+export async function listClientLoginStaffForClient(
+  supabase: TypedClient,
+  clientId: string,
+): Promise<ClientLoginStaffEntry[]> {
+  const { data: rows } = await supabase
+    .from("client_login_staff")
+    .select("staff_id")
+    .eq("client_id", clientId);
+  if (!rows || rows.length === 0) return [];
+
+  const staffIds = [...new Set(rows.map((r) => r.staff_id))];
+  const { data: staffRows } = await supabase
+    .from("staff")
+    .select("id, last_name, first_name, is_active")
+    .in("id", staffIds);
+  const staffById = new Map((staffRows ?? []).map((s) => [s.id, s]));
+
+  return staffIds.map((staffId) => {
+    const s = staffById.get(staffId);
+    return {
+      staffId,
+      name: s ? `${s.last_name} ${s.first_name}` : "不明なスタッフ",
+      isActive: s?.is_active ?? false,
+    };
+  });
+}
+
+/**
+ * 顧客編集画面のログイン者チェックボックス候補。active staff全員に加えて、
+ * 既にこの顧客のログイン者として登録済みのinactive staffも（選択解除できるように）含める。
+ * 新規に選べるのはactive staffのみ。
+ */
+export async function listLoginStaffCandidates(
+  supabase: TypedClient,
+  clientId: string,
+): Promise<ClientLoginStaffEntry[]> {
+  const [activeStaff, currentEntries] = await Promise.all([
+    listActiveStaff(supabase),
+    listClientLoginStaffForClient(supabase, clientId),
+  ]);
+
+  const options: ClientLoginStaffEntry[] = activeStaff.map((s) => ({
+    staffId: s.id,
+    name: `${s.last_name} ${s.first_name}`,
+    isActive: true,
+  }));
+
+  const activeIds = new Set(activeStaff.map((s) => s.id));
+  for (const entry of currentEntries) {
+    if (!activeIds.has(entry.staffId)) options.push(entry);
+  }
+
+  return options;
 }
 
 /** 顧客一覧画面の「利用サービス」表示用に、有効な投稿ルールの投稿種別をまとめて引く。 */

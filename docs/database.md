@@ -59,7 +59,7 @@
 | industry | text nullable | |
 | inflow_channel | text nullable | |
 | contact_method | text nullable | |
-| contract_status | text | contracted / proposal / paused / ended 等 |
+| contract_status | text | contracted / proposal / contract_preparation / lost / paused / ended |
 | current_status | text | 顧客全体の状態 |
 | contract_start_date | date nullable | |
 | contract_end_date | date nullable | |
@@ -83,6 +83,28 @@
 | active_from | date |
 | active_to | date nullable |
 | created_at | timestamptz |
+
+---
+
+## client_login_staff
+
+顧客のSNS等アカウントへ「ログインできるstaff」の恒常的な関連（client_assignments の
+主担当/副担当とは別概念。タスク引き継ぎ等の副作用は持たない）。中間テーブルで多対多を表現する。
+SNSパスワード・synthetic email・auth_user_id・OAuth token等は一切持たせない
+（client_id ↔ staff_id の関連のみ）。password_vault_url 等の保管先情報は既存の
+client_credentials が担当し、本テーブルとは独立。
+
+| column | type | note |
+|---|---|---|
+| id | uuid PK | |
+| client_id | uuid FK clients | |
+| staff_id | uuid FK staff | |
+| created_at | timestamptz | |
+| created_by_staff_id | uuid FK staff nullable | |
+
+`(client_id, staff_id)` に unique 制約。staffがinactiveになっても行は自動削除しない
+（表示側で「（無効）」等と分かるようにする）。全active staffがSELECT/INSERT/DELETE可能
+（part_time含む。UPDATEは不要）。
 
 ---
 

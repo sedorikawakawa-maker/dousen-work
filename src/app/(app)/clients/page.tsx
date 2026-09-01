@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  getActiveServicePostTypes,
   getClientAssignmentNames,
+  getClientLoginStaffNames,
   listActiveStaff,
   listClients,
 } from "@/lib/clients/queries";
@@ -11,9 +11,8 @@ import {
   CONTRACT_STATUS_OPTIONS,
   CLIENT_CURRENT_STATUS_LABELS,
   CLIENT_CURRENT_STATUS_OPTIONS,
-  POST_TYPE_LABELS,
 } from "@/lib/clients/labels";
-import { CLIENT_STATUS_BORDER_ACCENT } from "@/lib/clients/statusStyles";
+import { CLIENT_STATUS_BORDER_ACCENT, CONTRACT_STATUS_CARD_BG } from "@/lib/clients/statusStyles";
 import { getMaterialWaitElapsedDays, getMaterialWaitLevel } from "@/lib/reminders/material";
 import { PageContainer } from "@/components/PageContainer";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -21,14 +20,21 @@ import { UrgencyBadge } from "@/components/UrgencyBadge";
 import { ClientAvatar } from "@/components/ClientAvatar";
 
 const MAX_VISIBLE_SERVICES = 2;
+const MAX_VISIBLE_LOGIN_STAFF = 2;
 import type { ClientCurrentStatus, ContractStatus } from "@/lib/supabase/database.types";
 
 export default async function ClientsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; currentStatus?: string; contractStatus?: string; assigneeStaffId?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    currentStatus?: string;
+    contractStatus?: string;
+    assigneeStaffId?: string;
+    loginStaffId?: string;
+  }>;
 }) {
-  const { q, currentStatus, contractStatus, assigneeStaffId } = await searchParams;
+  const { q, currentStatus, contractStatus, assigneeStaffId, loginStaffId } = await searchParams;
   const supabase = await createSupabaseServerClient();
 
   const validCurrentStatus = CLIENT_CURRENT_STATUS_OPTIONS.some(([v]) => v === currentStatus)
@@ -44,17 +50,20 @@ export default async function ClientsPage({
       currentStatus: validCurrentStatus,
       contractStatus: validContractStatus,
       assigneeStaffId: assigneeStaffId || undefined,
+      loginStaffId: loginStaffId || undefined,
     }),
     listActiveStaff(supabase),
   ]);
 
   const clientIds = clients.map((c) => c.id);
-  const [assignmentByClientId, servicePostTypesByClientId] = await Promise.all([
+  const [assignmentByClientId, loginStaffNamesByClientId] = await Promise.all([
     getClientAssignmentNames(supabase, clientIds),
-    getActiveServicePostTypes(supabase, clientIds),
+    getClientLoginStaffNames(supabase, clientIds),
   ]);
 
-  const hasActiveFilter = Boolean(validCurrentStatus || validContractStatus || assigneeStaffId);
+  const hasActiveFilter = Boolean(
+    validCurrentStatus || validContractStatus || assigneeStaffId || loginStaffId,
+  );
 
   return (
     <PageContainer variant="wide" className="gap-6 bg-neutral-50 py-8">
@@ -128,6 +137,20 @@ export default async function ClientsPage({
             ))}
           </select>
 
+          <select
+            name="loginStaffId"
+            defaultValue={loginStaffId ?? ""}
+            aria-label="ログイン者で絞り込み"
+            className="min-w-[9.5rem] flex-1 rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-700 sm:flex-none"
+          >
+            <option value="">ログイン者: すべて</option>
+            {staffOptions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.last_name} {s.first_name}
+              </option>
+            ))}
+          </select>
+
           {hasActiveFilter ? (
             <Link
               href={q ? `/clients?q=${encodeURIComponent(q)}` : "/clients"}
@@ -144,10 +167,12 @@ export default async function ClientsPage({
           該当する顧客がありません。検索・絞り込み条件を変えてお試しください。
         </p>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {clients.map((client) => {
             const assignment = assignmentByClientId.get(client.id);
-            const servicePostTypes = servicePostTypesByClientId.get(client.id) ?? [];
+            const loginStaffNames = loginStaffNamesByClientId.get(client.id) ?? [];
+            const visibleLoginStaffNames = loginStaffNames.slice(0, MAX_VISIBLE_LOGIN_STAFF);
+            const hiddenLoginStaffCount = loginStaffNames.length - visibleLoginStaffNames.length;
             const materialWaitDays =
               client.current_status === "material_waiting"
                 ? getMaterialWaitElapsedDays(client.material_wait_started_at)
@@ -156,72 +181,77 @@ export default async function ClientsPage({
               client.current_status === "material_waiting"
                 ? getMaterialWaitLevel(client.material_wait_started_at)
                 : "none";
+            const cardTone = CONTRACT_STATUS_CARD_BG[client.contract_status];
 
             return (
               <Link
                 key={client.id}
                 href={`/clients/${client.id}`}
-                className={`flex flex-col gap-2 rounded-2xl border border-l-4 border-neutral-200 bg-white p-4 hover:border-neutral-300 sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${CLIENT_STATUS_BORDER_ACCENT[client.current_status]}`}
+                className={`flex flex-col gap-2 rounded-2xl border border-l-4 p-3.5 hover:shadow-sm ${cardTone.bg} ${cardTone.border} ${CLIENT_STATUS_BORDER_ACCENT[client.current_status]}`}
               >
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <ClientAvatar thumbnailUrl={client.thumbnail_url} name={client.company_name} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <span className="font-semibold text-neutral-900">{client.company_name}</span>
-                      {client.shop_name ? (
-                        <span className="text-sm text-neutral-500">（{client.shop_name}）</span>
-                      ) : null}
-                      <span className="text-xs font-medium tabular-nums text-neutral-500">
-                        {client.client_code}
-                      </span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <ClientAvatar thumbnailUrl={client.thumbnail_url} name={client.company_name} size="sm" />
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-neutral-900">
+                        {client.company_name}
+                        {client.shop_name ? `（${client.shop_name}）` : ""}
+                      </p>
+                      <p className="text-xs font-medium tabular-nums text-neutral-500">{client.client_code}</p>
                     </div>
-
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      {materialWaitDays !== null && materialWaitLevel !== "none" ? (
-                        <UrgencyBadge level={materialWaitLevel === "urgent" ? "urgent" : "warning"} />
-                      ) : null}
-                      <StatusBadge
-                        status={client.current_status}
-                        label={CLIENT_CURRENT_STATUS_LABELS[client.current_status]}
-                      />
-                      <StatusBadge
-                        status={client.contract_status}
-                        label={CONTRACT_STATUS_LABELS[client.contract_status]}
-                      />
-                      {servicePostTypes.length > 0 ? (
-                        <span className="text-xs text-neutral-500">
-                          {servicePostTypes.map((t) => POST_TYPE_LABELS[t]).join("・")}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    {client.services.length > 0 ? (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {client.services.slice(0, MAX_VISIBLE_SERVICES).map((service) => (
-                          <span
-                            key={service}
-                            className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-600"
-                          >
-                            {service}
-                          </span>
-                        ))}
-                        {client.services.length > MAX_VISIBLE_SERVICES ? (
-                          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-500">
-                            +{client.services.length - MAX_VISIBLE_SERVICES}
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    <p className="mt-1.5 text-xs text-neutral-500">
-                      主担当: {assignment?.primaryName ?? "未設定"} ／ 副担当: {assignment?.secondaryName ?? "—"}
-                    </p>
                   </div>
+                  <span className="shrink-0 text-neutral-400" aria-hidden="true">
+                    ›
+                  </span>
                 </div>
 
-                <span className="inline-flex shrink-0 items-center gap-1 self-start rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 sm:self-center">
-                  詳細を見る ›
-                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {materialWaitDays !== null && materialWaitLevel !== "none" ? (
+                    <UrgencyBadge level={materialWaitLevel === "urgent" ? "urgent" : "warning"} />
+                  ) : null}
+                  <StatusBadge
+                    status={client.current_status}
+                    label={CLIENT_CURRENT_STATUS_LABELS[client.current_status]}
+                  />
+                  <StatusBadge
+                    status={client.contract_status}
+                    label={CONTRACT_STATUS_LABELS[client.contract_status]}
+                  />
+                </div>
+
+                {client.services.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {client.services.slice(0, MAX_VISIBLE_SERVICES).map((service) => (
+                      <span
+                        key={service}
+                        className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] text-neutral-600"
+                      >
+                        {service}
+                      </span>
+                    ))}
+                    {client.services.length > MAX_VISIBLE_SERVICES ? (
+                      <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] text-neutral-500">
+                        +{client.services.length - MAX_VISIBLE_SERVICES}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <p className="text-xs text-neutral-500">
+                  主担当: {assignment?.primaryName ?? "未設定"} ／ 副担当: {assignment?.secondaryName ?? "—"}
+                </p>
+
+                <p className="text-xs text-neutral-500">
+                  ログイン者:{" "}
+                  {loginStaffNames.length === 0 ? (
+                    <span className="text-neutral-400">未設定</span>
+                  ) : (
+                    <>
+                      {visibleLoginStaffNames.join(" / ")}
+                      {hiddenLoginStaffCount > 0 ? ` +${hiddenLoginStaffCount}` : ""}
+                    </>
+                  )}
+                </p>
               </Link>
             );
           })}

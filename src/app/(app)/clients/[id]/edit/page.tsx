@@ -4,7 +4,12 @@ import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { canViewFinance } from "@/lib/auth/roles";
-import { getClientDetail, listActiveStaff } from "@/lib/clients/queries";
+import {
+  getClientDetail,
+  listActiveStaff,
+  listClientLoginStaffForClient,
+  listLoginStaffCandidates,
+} from "@/lib/clients/queries";
 import {
   ASSIGNMENT_TYPE_LABELS,
   CONTACT_METHOD_OPTIONS,
@@ -28,6 +33,7 @@ import {
   updateAssignmentAction,
   updateBasicInfoAction,
   updateContractAction,
+  updateLoginStaffAction,
   updateOperationProfileAction,
   updateReminderSettingAction,
 } from "../actions";
@@ -41,6 +47,7 @@ const SECTION_TITLES: Record<string, string> = {
   basic: "基本情報",
   contract: "契約情報",
   assignment: "主担当・副担当",
+  loginStaff: "ログイン者",
   profile: "制作方針",
   schedule: "投稿スケジュール",
   links: "SNS・各種リンク",
@@ -60,10 +67,13 @@ export default async function ClientEditPage({
 
   const staff = await getCurrentStaff();
   const supabase = await createSupabaseServerClient();
-  const [detail, staffOptions] = await Promise.all([
+  const [detail, staffOptions, loginStaffCandidates, currentLoginStaff] = await Promise.all([
     getClientDetail(supabase, id),
     listActiveStaff(supabase),
+    listLoginStaffCandidates(supabase, id),
+    listClientLoginStaffForClient(supabase, id),
   ]);
+  const currentLoginStaffIds = new Set(currentLoginStaff.map((s) => s.staffId));
 
   if (!detail.client) {
     notFound();
@@ -262,6 +272,43 @@ export default async function ClientEditPage({
             <SaveButton />
           </form>
         </div>
+      </Section>
+
+      {/* ログイン者 */}
+      <Section title="ログイン者">
+        <form action={updateLoginStaffAction} className="flex flex-col gap-4">
+          <input type="hidden" name="clientId" value={id} />
+          <p className="text-xs text-neutral-500">
+            この顧客のSNS等アカウントへログインできるスタッフです。主担当・副担当とは別に、複数名を設定できます。
+          </p>
+          <fieldset>
+            <legend className="sr-only">ログイン者</legend>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+              {loginStaffCandidates.map((candidate) => (
+                <label
+                  key={candidate.staffId}
+                  className={`flex items-center gap-1.5 text-sm ${
+                    candidate.isActive ? "text-neutral-700" : "text-neutral-400"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    name="loginStaffIds"
+                    value={candidate.staffId}
+                    defaultChecked={currentLoginStaffIds.has(candidate.staffId)}
+                    className="h-4 w-4 rounded border-neutral-300"
+                  />
+                  {candidate.name}
+                  {!candidate.isActive ? "（無効）" : ""}
+                </label>
+              ))}
+              {loginStaffCandidates.length === 0 ? (
+                <p className="col-span-full text-sm text-neutral-400">選択可能なスタッフがいません。</p>
+              ) : null}
+            </div>
+          </fieldset>
+          <SaveButton />
+        </form>
       </Section>
 
       {/* 制作方針 */}

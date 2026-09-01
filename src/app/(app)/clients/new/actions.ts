@@ -26,6 +26,7 @@ export async function registerClientAction(
   const contractStatus = String(formData.get("contractStatus") ?? "proposal") as ContractStatus;
   const primaryStaffId = String(formData.get("primaryStaffId") ?? "").trim();
   const services = formData.getAll("services").map((v) => String(v));
+  const loginStaffIds = [...new Set(formData.getAll("loginStaffIds").map((v) => String(v)))];
 
   const supabase = await createSupabaseServerClient();
 
@@ -56,6 +57,16 @@ export async function registerClientAction(
       active_from: new Date().toISOString().slice(0, 10),
       active_to: null,
     });
+  }
+
+  if (loginStaffIds.length > 0) {
+    await supabase.from("client_login_staff").insert(
+      loginStaffIds.map((staffId) => ({
+        client_id: clientId,
+        staff_id: staffId,
+        created_by_staff_id: staff.id,
+      })),
+    );
   }
 
   redirect(`/clients/${clientId}`);

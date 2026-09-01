@@ -3,7 +3,13 @@
 
 export type StaffRole = "president" | "executive" | "employee" | "part_time";
 
-export type ContractStatus = "contracted" | "proposal" | "paused" | "ended";
+export type ContractStatus =
+  | "contracted"
+  | "proposal"
+  | "contract_preparation"
+  | "lost"
+  | "paused"
+  | "ended";
 
 export type ClientCurrentStatus =
   | "on_track"
@@ -173,6 +179,26 @@ export interface Database {
         };
         Update: Partial<
           Database["public"]["Tables"]["client_assignments"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      client_login_staff: {
+        Row: {
+          id: string;
+          client_id: string;
+          staff_id: string;
+          created_at: string;
+          created_by_staff_id: string | null;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["client_login_staff"]["Row"],
+          "id" | "created_at"
+        > & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["client_login_staff"]["Insert"]
         >;
         Relationships: [];
       };

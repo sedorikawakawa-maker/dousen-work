@@ -10,6 +10,8 @@ import type {
 export const CONTRACT_STATUS_LABELS: Record<ContractStatus, string> = {
   contracted: "契約中",
   proposal: "提案中",
+  contract_preparation: "契約書作成待ち",
+  lost: "失注",
   paused: "休止",
   ended: "契約終了",
 };
