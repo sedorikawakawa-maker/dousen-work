@@ -3,6 +3,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { getDriveService } from "@/lib/drive/DriveService";
+import { validateBrowserOrigin } from "@/lib/http/origin";
 import { PRODUCTION_VIDEO_FOLDER_HINT } from "@/lib/productionVideos/upload";
 import type { PostType } from "@/lib/supabase/database.types";
 
@@ -14,23 +15,6 @@ const POST_TYPES: readonly PostType[] = ["reel", "feed", "story"];
 
 function isValidPostType(value: unknown): value is PostType {
   return typeof value === "string" && (POST_TYPES as readonly string[]).includes(value);
-}
-
-/**
- * ブラウザが申告したOriginを無条件に信用せず、このリクエスト自体のhost/protoから
- * サーバー側で独立に算出した「期待されるOrigin」とだけ照合する
- * （googleClient.tsのgetRedirectUri()と同じ考え方）。一致すればそのOriginを、
- * 一致しなければサーバー側算出値を使う（＝申告Originは常に無視される）。
- * これにより、開発(localhost)・本番(Netlifyドメイン)のどちらでもハードコードなしで
- * 安全に検証できる。
- */
-async function resolveValidatedOrigin(claimedOrigin: string | undefined): Promise<string> {
-  const { headers } = await import("next/headers");
-  const headerList = await headers();
-  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
-  const proto = headerList.get("x-forwarded-proto") ?? (host?.includes("localhost") ? "http" : "https");
-  const expectedOrigin = `${proto}://${host}`;
-  return claimedOrigin === expectedOrigin ? claimedOrigin : expectedOrigin;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +62,7 @@ export async function createProductionVideoUploadSessionsAction(
   }
 
   try {
-    const validatedOrigin = await resolveValidatedOrigin(browserOrigin);
+    const validatedOrigin = await validateBrowserOrigin(browserOrigin);
     const drive = await getDriveService();
     const folder = await drive.resolveFolder({
       clientId: trimmedClientId,

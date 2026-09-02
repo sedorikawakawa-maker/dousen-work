@@ -1,6 +1,7 @@
 import "server-only";
 import type {
   CreateResumableUploadSessionInput,
+  DriveFileMetadata,
   DriveFolderRef,
   DriveService,
   DriveUploadInput,
@@ -266,6 +267,27 @@ export class GoogleDriveService implements DriveService {
       await drive.files.delete({ fileId });
     } catch {
       // ベストエフォートのため無視する。
+    }
+  }
+
+  /**
+   * ファイル（フォルダも同じFileリソースなので可）のid/name/親フォルダID一覧を取得する。
+   * ブラウザ申告のdrive_file_idが本当に想定フォルダ内に存在するかの検証に使う
+   * （material-form等の外部公開フォームでの不正な値の注入を防ぐ）。
+   * 存在しない・アクセス不可の場合はnullを返す（例外にしない。呼び出し側は
+   * nullを「検証失敗」として扱う）。
+   */
+  async getFileMetadata(fileId: string): Promise<DriveFileMetadata | null> {
+    try {
+      const refreshToken = await getDecryptedRefreshToken();
+      if (!refreshToken) return null;
+      const authClient = await createAuthorizedClient(refreshToken);
+      const drive = getDriveClient(authClient);
+      const { data } = await drive.files.get({ fileId, fields: "id, name, parents" });
+      if (!data.id) return null;
+      return { id: data.id, name: data.name ?? "", parents: data.parents ?? [] };
+    } catch {
+      return null;
     }
   }
 }

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { encodeMockFileId } from "@/lib/drive/DriveService";
 
 /**
  * MockDriveService専用の疑似resumable upload受け口。
@@ -6,6 +7,9 @@ import { NextResponse, type NextRequest } from "next/server";
  * （sessionUrlへ直接PUTしてid/webViewLinkのJSONを受け取る）ままにするためのモック。
  * ファイル本体はどこにも永続化せず破棄する（既存MockDriveServiceと同じ方針）。
  * 本番では絶対に有効化しない。
+ *
+ * 発行したfileIdは folder/name を自己記述的に埋め込んだ値にする
+ * （MockDriveService.getFileMetadata()がステートレスに検証できるようにするため）。
  */
 export async function PUT(request: NextRequest) {
   if (process.env.NODE_ENV === "production") {
@@ -13,10 +17,11 @@ export async function PUT(request: NextRequest) {
   }
 
   const name = request.nextUrl.searchParams.get("name") ?? "mock-file";
+  const folder = request.nextUrl.searchParams.get("folder") ?? "unknown-folder";
   // ファイル本体は保存せず読み捨てる。
   await request.arrayBuffer();
 
-  const id = `mock-${crypto.randomUUID()}`;
+  const id = encodeMockFileId(folder, name);
   return NextResponse.json(
     {
       id,

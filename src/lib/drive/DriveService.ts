@@ -62,6 +62,13 @@ export interface ResumableUploadSession {
   sessionUrl: string;
 }
 
+export interface DriveFileMetadata {
+  id: string;
+  name: string;
+  /** 親フォルダID一覧。「ブラウザが申告したdriveFileIdが本当に想定フォルダ内にあるか」の検証に使う。 */
+  parents: string[];
+}
+
 export interface DriveService {
   /** モック実装かどうか。UI側で開発環境の注意書き表示判定に使う。 */
   readonly isMock: boolean;
@@ -92,6 +99,13 @@ export interface DriveService {
   createResumableUploadSession(input: CreateResumableUploadSessionInput): Promise<ResumableUploadSession>;
   /** resumable upload失敗時の後始末など、ベストエフォートで使うファイル削除。 */
   deleteFile(fileId: string): Promise<void>;
+  /**
+   * 汎用: ファイル（またはフォルダ）のメタデータ（id/name/親フォルダID一覧）を取得する。
+   * ブラウザから申告されたdrive_file_id等を無条件に信用せず、実際に想定フォルダ内に
+   * 存在するかをサーバー側で検証する用途（material-form等の外部公開フォームで重要）。
+   * 存在しない/取得できない場合はnullを返す（例外は投げない）。
+   */
+  getFileMetadata(fileId: string): Promise<DriveFileMetadata | null>;
 }
 
 /**
@@ -114,12 +128,18 @@ class MockDriveService implements DriveService {
     };
   }
 
+  /**
+   * clientId+dateFolderName+submissionFolderNameから決定的なIDを作る
+   * （実Driveのfindorcreateと同じく、同じ組み合わせなら毎回同じフォルダに解決される。
+   * material-formのconfirm時にsession発行時と同じ呼び出しを再度行いfolderIdの
+   * 一致を検証するため、ここが非決定的だと検証が常に失敗してしまう）。
+   */
   async resolveMaterialSubmissionFolder({
     clientId,
     dateFolderName,
     submissionFolderName,
   }: ResolveMaterialSubmissionFolderInput): Promise<DriveFolderRef> {
-    const id = `mock-folder-${crypto.randomUUID()}`;
+    const id = `mock-folder-${clientId}-${dateFolderName}-${submissionFolderName}`;
     return {
       folderId: id,
       folderUrl: `https://drive.google.com/mock-storage/${clientId}/${dateFolderName}/${encodeURIComponent(
@@ -151,18 +171,55 @@ class MockDriveService implements DriveService {
    * （PUTしてid/webViewLinkのJSONを受け取る）は本番のresumable経路と全く同じまま動く。
    * 本番コード側で「localhostだから旧経路」のような分岐は行わない。
    */
-  async createResumableUploadSession({ file }: CreateResumableUploadSessionInput): Promise<ResumableUploadSession> {
+  async createResumableUploadSession({
+    folderId,
+    file,
+  }: CreateResumableUploadSessionInput): Promise<ResumableUploadSession> {
     const { headers } = await import("next/headers");
     const headerList = await headers();
     const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
     const proto = headerList.get("x-forwarded-proto") ?? (host?.includes("localhost") ? "http" : "https");
     const sessionId = crypto.randomUUID();
-    const query = new URLSearchParams({ name: file.name });
+    // folderIdもクエリに載せておき、モック受け口が「folder+nameを埋め込んだ自己記述的な
+    // fileId」を生成できるようにする（getFileMetadataでの検証を成立させるため）。
+    const query = new URLSearchParams({ name: file.name, folder: folderId });
     return { sessionUrl: `${proto}://${host}/api/mock-drive-upload/${sessionId}?${query.toString()}` };
   }
 
   /** モックには実体が無いため何もしない。 */
   async deleteFile(): Promise<void> {}
+
+  /**
+   * モックのfileIdは`/api/mock-drive-upload`が発行した自己記述的な値
+   * （folder/nameをbase64url埋め込みしたもの）。それをデコードして返すだけで、
+   * 実Driveへの問い合わせは行わない。
+   */
+  async getFileMetadata(fileId: string): Promise<DriveFileMetadata | null> {
+    const decoded = decodeMockFileId(fileId);
+    if (!decoded) return null;
+    return { id: fileId, name: decoded.name, parents: [decoded.folder] };
+  }
+}
+
+const MOCK_FILE_ID_PREFIX = "mock-";
+
+export function encodeMockFileId(folder: string, name: string): string {
+  const payload = Buffer.from(JSON.stringify({ folder, name }), "utf8").toString("base64url");
+  return `${MOCK_FILE_ID_PREFIX}${payload}`;
+}
+
+function decodeMockFileId(fileId: string): { folder: string; name: string } | null {
+  if (!fileId.startsWith(MOCK_FILE_ID_PREFIX)) return null;
+  try {
+    const json = Buffer.from(fileId.slice(MOCK_FILE_ID_PREFIX.length), "base64url").toString("utf8");
+    const parsed = JSON.parse(json);
+    if (typeof parsed?.folder === "string" && typeof parsed?.name === "string") {
+      return { folder: parsed.folder, name: parsed.name };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 interface DriveConfigCheck {
