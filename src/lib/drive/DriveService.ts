@@ -41,6 +41,27 @@ export interface ResolveFolderInput {
   folderHint: string;
 }
 
+export interface CreateResumableUploadSessionInput {
+  /** アップロード先フォルダID（resolveFolder等で事前に解決済みのもの。複数ファイルでも1回の解決結果を使い回す）。 */
+  folderId: string;
+  file: {
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+  };
+  /**
+   * ブラウザがPUTする際のOrigin（呼び出し元でホワイトリスト検証済みのものだけを渡すこと）。
+   * session開始POSTにこのOriginを付与することで、後続のブラウザPUTがCORSで
+   * ブロックされないようにする狙いの検証用パラメータ。
+   */
+  origin?: string;
+}
+
+export interface ResumableUploadSession {
+  /** ブラウザが直接PUTする先のURL。access token等の秘密情報は含まれない（Google発行のopaqueなsession識別子のみ）。 */
+  sessionUrl: string;
+}
+
 export interface DriveService {
   /** モック実装かどうか。UI側で開発環境の注意書き表示判定に使う。 */
   readonly isMock: boolean;
@@ -60,6 +81,17 @@ export interface DriveService {
    * フォルダを開くリンクの表示に使う。
    */
   resolveFolder(input: ResolveFolderInput): Promise<DriveFolderRef>;
+  /**
+   * 汎用: 指定フォルダへの1ファイル分のresumable upload sessionを発行する。
+   * ブラウザがこのsession URLへ直接PUTすることで、動画本体をNetlify Functions
+   * （Server Action）のリクエストボディへ一切通さずにGoogle Driveへ送れる。
+   * access token自体はこの呼び出しの外（ブラウザ側）へは一切渡らない。
+   * production-videos専用ではなく、将来material-form/outsourcing-upload/
+   * post_records final等でも同じ形で流用できる汎用メソッドとして設計している。
+   */
+  createResumableUploadSession(input: CreateResumableUploadSessionInput): Promise<ResumableUploadSession>;
+  /** resumable upload失敗時の後始末など、ベストエフォートで使うファイル削除。 */
+  deleteFile(fileId: string): Promise<void>;
 }
 
 /**
@@ -112,6 +144,25 @@ class MockDriveService implements DriveService {
       folderUrl: `https://drive.google.com/mock-storage/${clientId}/${encodeURIComponent(folderHint)}?id=${id}`,
     };
   }
+
+  /**
+   * 実Driveへは接続しないため、ブラウザが直接PUTできる先として自サーバー内の
+   * モック受け口（/api/mock-drive-upload/[sessionId]）を返す。ブラウザ側のコード
+   * （PUTしてid/webViewLinkのJSONを受け取る）は本番のresumable経路と全く同じまま動く。
+   * 本番コード側で「localhostだから旧経路」のような分岐は行わない。
+   */
+  async createResumableUploadSession({ file }: CreateResumableUploadSessionInput): Promise<ResumableUploadSession> {
+    const { headers } = await import("next/headers");
+    const headerList = await headers();
+    const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
+    const proto = headerList.get("x-forwarded-proto") ?? (host?.includes("localhost") ? "http" : "https");
+    const sessionId = crypto.randomUUID();
+    const query = new URLSearchParams({ name: file.name });
+    return { sessionUrl: `${proto}://${host}/api/mock-drive-upload/${sessionId}?${query.toString()}` };
+  }
+
+  /** モックには実体が無いため何もしない。 */
+  async deleteFile(): Promise<void> {}
 }
 
 interface DriveConfigCheck {

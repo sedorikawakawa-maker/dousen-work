@@ -1,16 +1,23 @@
 import "server-only";
 import type {
+  CreateResumableUploadSessionInput,
   DriveFolderRef,
   DriveService,
   DriveUploadInput,
   DriveUploadResult,
   ResolveFolderInput,
   ResolveMaterialSubmissionFolderInput,
+  ResumableUploadSession,
   UploadToResolvedFolderInput,
 } from "./DriveService";
 import { getDriveIntegrationRow, getDecryptedRefreshToken } from "@/lib/googleDrive/repository";
 import { createAuthorizedClient, getDriveClient, describeGoogleError } from "@/lib/googleDrive/googleClient";
-import { findOrCreateFolder, resolveClientFolder, uploadFileToFolder } from "@/lib/googleDrive/driveOperations";
+import {
+  createResumableSession,
+  findOrCreateFolder,
+  resolveClientFolder,
+  uploadFileToFolder,
+} from "@/lib/googleDrive/driveOperations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -209,6 +216,56 @@ export class GoogleDriveService implements DriveService {
       return { folderId, folderUrl: `https://drive.google.com/drive/folders/${folderId}` };
     } catch (err) {
       throw new Error(describeGoogleError(err));
+    }
+  }
+
+  /**
+   * ブラウザが直接PUTできるresumable upload sessionを発行する。access tokenは
+   * この関数の中だけで使い、戻り値のsessionUrlにも含めない（Google側が発行する
+   * opaqueなsession識別子のみ。session URL自体はDBへの保存・ログ出力も行わない）。
+   */
+  async createResumableUploadSession(input: CreateResumableUploadSessionInput): Promise<ResumableUploadSession> {
+    const row = await getDriveIntegrationRow();
+    if (!row || row.status !== "connected" || !row.refresh_token_encrypted) {
+      throw new Error("Google Driveが連携されていません。管理者にご連絡ください。");
+    }
+
+    const refreshToken = await getDecryptedRefreshToken();
+    if (!refreshToken) {
+      throw new Error("Google Drive連携が無効です。管理者にご連絡ください。");
+    }
+
+    let authClient;
+    try {
+      authClient = await createAuthorizedClient(refreshToken);
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+
+    try {
+      const sessionUrl = await createResumableSession(authClient, {
+        folderId: input.folderId,
+        fileName: input.file.name,
+        mimeType: input.file.mimeType,
+        fileSizeBytes: input.file.sizeBytes,
+        origin: input.origin,
+      });
+      return { sessionUrl };
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+  }
+
+  /** ベストエフォート削除。失敗しても呼び出し側の処理は継続させるため例外は投げない。 */
+  async deleteFile(fileId: string): Promise<void> {
+    try {
+      const refreshToken = await getDecryptedRefreshToken();
+      if (!refreshToken) return;
+      const authClient = await createAuthorizedClient(refreshToken);
+      const drive = getDriveClient(authClient);
+      await drive.files.delete({ fileId });
+    } catch {
+      // ベストエフォートのため無視する。
     }
   }
 }

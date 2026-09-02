@@ -14,7 +14,6 @@ import {
   CONTRACT_STATUS_LABELS,
   LINK_TYPE_LABELS,
   POST_TYPE_LABELS,
-  POST_TYPE_OPTIONS,
   PRODUCTION_TASK_STATUS_LABELS,
   postUsageLabel,
 } from "@/lib/clients/labels";
@@ -31,16 +30,15 @@ import { listClientConfirmationsForClient } from "@/lib/clientConfirmations/quer
 import { CLIENT_CONFIRMATION_STATUS_LABELS } from "@/lib/clientConfirmations/labels";
 import { listPostRecordsForClient, listRecentlyCompletedTasks } from "@/lib/postRecords/queries";
 import { cancelPostRecordAction } from "@/app/(app)/post-records/actions";
-import { addProductionVideoAction } from "@/app/(app)/production-videos/actions";
 import { listProductionVideosForClient, type ProductionVideoRow } from "@/lib/productionVideos/queries";
 import { resolveProductionVideoFolder } from "@/lib/productionVideos/upload";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
+import { ProductionVideoUploadForm } from "@/components/ProductionVideoUploadForm";
 import { CopyButton } from "@/components/CopyButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { UrgencyBadge } from "@/components/UrgencyBadge";
 import { PageContainer } from "@/components/PageContainer";
 import { ClientAvatar } from "@/components/ClientAvatar";
-import { SubmitButton } from "@/components/SubmitButton";
 import {
   addMaterialAction,
   issueMaterialFormTokenAction,
@@ -795,55 +793,14 @@ export default async function ClientDetailPage({
               ) : null}
             </ul>
 
-            <form
-              action={addProductionVideoAction}
-              className="flex flex-col gap-3 border-t border-neutral-100 pt-4"
-            >
-              <input type="hidden" name="clientId" value={id} />
-              <input type="hidden" name="returnTo" value={`/clients/${id}?tab=productionVideos`} />
+            <div className="flex flex-col gap-3 border-t border-neutral-100 pt-4">
               <h3 className="text-sm font-semibold text-neutral-700">制作動画をアップロード</h3>
-              <label className="text-sm font-medium text-neutral-700">
-                ファイル（複数選択可）
-                <input
-                  name="files"
-                  type="file"
-                  multiple
-                  required
-                  accept="video/*"
-                  className="mt-1.5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="text-sm font-medium text-neutral-700">
-                投稿種別（任意）
-                <select
-                  name="postType"
-                  defaultValue=""
-                  className="mt-1.5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
-                >
-                  <option value="">未指定</option>
-                  {POST_TYPE_OPTIONS.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-medium text-neutral-700">
-                メモ（任意）
-                <textarea
-                  name="memo"
-                  rows={2}
-                  className="mt-1.5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
-                />
-              </label>
               <DriveMockNotice />
-              <SubmitButton
-                pendingText="アップロード中..."
-                className="mt-1 w-full rounded-md border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
-              >
-                アップロードする
-              </SubmitButton>
-            </form>
+              <ProductionVideoUploadForm
+                lockedClientId={id}
+                lockedClientLabel={`${client.company_name}${client.shop_name ? `（${client.shop_name}）` : ""}`}
+              />
+            </div>
           </div>
         ) : null}
 

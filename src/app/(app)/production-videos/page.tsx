@@ -4,12 +4,11 @@ import { getCurrentStaff } from "@/lib/auth/session";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listClients, listActiveStaff } from "@/lib/clients/queries";
 import { listProductionVideos } from "@/lib/productionVideos/queries";
-import { POST_TYPE_LABELS, POST_TYPE_OPTIONS } from "@/lib/clients/labels";
+import { POST_TYPE_LABELS } from "@/lib/clients/labels";
 import { PageContainer } from "@/components/PageContainer";
 import { ClientAvatar } from "@/components/ClientAvatar";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
-import { SubmitButton } from "@/components/SubmitButton";
-import { addProductionVideoAction } from "./actions";
+import { ProductionVideoUploadForm } from "@/components/ProductionVideoUploadForm";
 
 type TabKey = "upload" | "view";
 
@@ -88,78 +87,15 @@ export default async function ProductionVideosPage({
       {error ? <p className="rounded-2xl bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p> : null}
 
       {activeTab === "upload" ? (
-        <form
-          action={addProductionVideoAction}
-          className="flex max-w-xl flex-col gap-4 rounded-2xl bg-white p-5"
-        >
-          <input type="hidden" name="returnTo" value="/production-videos?tab=upload" />
-
-          <label className="text-sm font-medium text-neutral-700">
-            顧客
-            <select
-              name="clientId"
-              required
-              defaultValue=""
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            >
-              <option value="" disabled>
-                選択してください
-              </option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.client_code} {c.company_name}
-                  {c.shop_name ? `（${c.shop_name}）` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="text-sm font-medium text-neutral-700">
-            ファイル（複数選択可）
-            <input
-              name="files"
-              type="file"
-              multiple
-              required
-              accept="video/*"
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            />
-          </label>
-
-          <label className="text-sm font-medium text-neutral-700">
-            投稿種別（任意）
-            <select
-              name="postType"
-              defaultValue=""
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            >
-              <option value="">未指定</option>
-              {POST_TYPE_OPTIONS.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="text-sm font-medium text-neutral-700">
-            メモ（任意）
-            <textarea
-              name="memo"
-              rows={2}
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            />
-          </label>
-
+        <div className="flex max-w-xl flex-col gap-3">
           <DriveMockNotice />
-
-          <SubmitButton
-            pendingText="アップロード中..."
-            className="mt-1 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
-          >
-            アップロードする
-          </SubmitButton>
-        </form>
+          <ProductionVideoUploadForm
+            clients={clients.map((c) => ({
+              id: c.id,
+              label: `${c.client_code} ${c.company_name}${c.shop_name ? `（${c.shop_name}）` : ""}`,
+            }))}
+          />
+        </div>
       ) : (
         <div className="flex flex-col gap-4">
           <form action="/production-videos" method="get" className="flex flex-wrap items-end gap-2">
