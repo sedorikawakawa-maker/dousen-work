@@ -80,6 +80,12 @@ export type ProductionTaskStatus =
   | "posting_waiting"
   | "completed";
 
+export type BillingMethod = "email" | "postal" | "other";
+
+export type BillingType = "recurring" | "one_time";
+
+export type InvoiceStatus = "planned" | "prepared" | "sent";
+
 export interface Database {
   public: {
     Tables: {
@@ -760,6 +766,122 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["internal_tasks"]["Insert"]>;
         Relationships: [];
       };
+      client_billing_profiles: {
+        Row: {
+          id: string;
+          client_id: string;
+          invoice_required: boolean;
+          billing_company_name: string | null;
+          billing_contact_name: string | null;
+          billing_email: string | null;
+          billing_cc_email: string | null;
+          billing_method: BillingMethod | null;
+          billing_postal_address: string | null;
+          contract_cycle_months: number | null;
+          renewal_month: number | null;
+          billing_notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["client_billing_profiles"]["Row"],
+          "id" | "created_at" | "updated_at"
+        > & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["client_billing_profiles"]["Insert"]>;
+        Relationships: [];
+      };
+      billing_rules: {
+        Row: {
+          id: string;
+          client_id: string;
+          billing_type: BillingType;
+          subject: string;
+          description: string | null;
+          quantity: number;
+          unit_price_ex_tax: number;
+          notes: string | null;
+          valid_from: string | null;
+          valid_to: string | null;
+          revenue_month_offset_months: number;
+          one_time_billing_month: string | null;
+          one_time_revenue_month: string | null;
+          is_active: boolean;
+          created_by_staff_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["billing_rules"]["Row"],
+          "id" | "created_at" | "updated_at"
+        > & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["billing_rules"]["Insert"]>;
+        Relationships: [];
+      };
+      invoices: {
+        Row: {
+          id: string;
+          client_id: string;
+          billing_month: string;
+          status: InvoiceStatus;
+          billing_company_name_snapshot: string | null;
+          billing_contact_name_snapshot: string | null;
+          billing_email_snapshot: string | null;
+          billing_cc_email_snapshot: string | null;
+          billing_method_snapshot: string | null;
+          billing_postal_address_snapshot: string | null;
+          sent_at: string | null;
+          sent_by_staff_id: string | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["invoices"]["Row"],
+          "id" | "status" | "created_at" | "updated_at"
+        > & {
+          id?: string;
+          status?: InvoiceStatus;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["invoices"]["Insert"]>;
+        Relationships: [];
+      };
+      invoice_items: {
+        Row: {
+          id: string;
+          invoice_id: string;
+          client_id: string;
+          billing_rule_id: string | null;
+          billing_month: string;
+          revenue_month: string;
+          subject: string;
+          description: string | null;
+          quantity: number;
+          unit_price_ex_tax: number;
+          tax_excluded_amount: number;
+          amount_override: number | null;
+          notes: string | null;
+          created_at: string;
+          cancelled_at: string | null;
+          cancelled_by_staff_id: string | null;
+          cancel_reason: string | null;
+        };
+        Insert: Omit<Database["public"]["Tables"]["invoice_items"]["Row"], "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["invoice_items"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       clients_view: {
@@ -914,6 +1036,19 @@ export interface Database {
           p_files: MaterialSubmissionFileInput[];
         };
         Returns: string;
+      };
+      mark_invoice_sent: {
+        Args: {
+          p_invoice_id: string;
+        };
+        Returns: undefined;
+      };
+      cancel_invoice_item: {
+        Args: {
+          p_invoice_item_id: string;
+          p_reason: string;
+        };
+        Returns: undefined;
       };
     };
     Enums: Record<string, never>;

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { canViewFinance } from "@/lib/auth/roles";
+import { requireBillingAccess } from "@/lib/billing/authGuard";
 import {
   generateTasksForRule,
   regenerateTasksForRule,
@@ -14,6 +15,7 @@ import { generateMaterialFormToken, hashMaterialFormToken } from "@/lib/material
 import { uploadFilesForMaterialSubmission } from "@/lib/materials/submissionUpload";
 import type {
   AssignmentType,
+  BillingMethod,
   ContractStatus,
   LinkType,
   MaterialSubmissionFileInput,
@@ -274,6 +276,99 @@ export async function updateLoginStaffAction(formData: FormData) {
   }
 
   redirect(editUrl(clientId, { saved: "loginStaff" }));
+}
+
+const CONTRACT_CYCLE_MONTHS_OPTIONS = [1, 3, 6, 12];
+const BILLING_METHODS: readonly BillingMethod[] = ["email", "postal", "other"];
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function billingUrl(clientId: string, params: Record<string, string>) {
+  const search = new URLSearchParams(params).toString();
+  return `/clients/${clientId}?tab=billing&${search}`;
+}
+
+/**
+ * client_billing_profilesの1顧客1行upsert（client_operation_profilesと同じ方式）。
+ * この機能は全体がpresident/executive/employee限定のため、個別フィールドの
+ * 部分許可（updateContractActionのcanUpdateFinance方式）ではなく、
+ * requireBillingAccess()による全体ブロックを使う。
+ */
+export async function saveClientBillingProfileAction(formData: FormData) {
+  await requireBillingAccess();
+
+  const clientId = String(formData.get("clientId") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  // ブラウザ申告のclientIdを無条件に信用せず、実在確認してから保存する。
+  const { data: client } = await supabase.from("clients_view").select("id").eq("id", clientId).maybeSingle();
+  if (!client) {
+    redirect(billingUrl(clientId, { error: "顧客が見つかりません。" }));
+  }
+
+  const invoiceRequired = formData.get("invoiceRequired") === "true";
+  const billingCompanyName = emptyToNull(formData.get("billingCompanyName"));
+  const billingContactName = emptyToNull(formData.get("billingContactName"));
+  const billingEmail = emptyToNull(formData.get("billingEmail"));
+  const billingCcEmail = emptyToNull(formData.get("billingCcEmail"));
+  const billingMethodRaw = emptyToNull(formData.get("billingMethod"));
+  const billingPostalAddress = emptyToNull(formData.get("billingPostalAddress"));
+  const contractCycleMonthsRaw = emptyToNull(formData.get("contractCycleMonths"));
+  const renewalMonthRaw = emptyToNull(formData.get("renewalMonth"));
+  const billingNotes = emptyToNull(formData.get("billingNotes"));
+
+  if (billingEmail && !EMAIL_PATTERN.test(billingEmail)) {
+    redirect(billingUrl(clientId, { error: "請求書送付先メールアドレスの形式が正しくありません。" }));
+  }
+  if (billingCcEmail && !EMAIL_PATTERN.test(billingCcEmail)) {
+    redirect(billingUrl(clientId, { error: "CCメールアドレスの形式が正しくありません。" }));
+  }
+
+  let billingMethod: BillingMethod | null = null;
+  if (billingMethodRaw !== null) {
+    if (!BILLING_METHODS.includes(billingMethodRaw as BillingMethod)) {
+      redirect(billingUrl(clientId, { error: "送付方法の指定が不正です。" }));
+    }
+    billingMethod = billingMethodRaw as BillingMethod;
+  }
+
+  let contractCycleMonths: number | null = null;
+  if (contractCycleMonthsRaw !== null) {
+    const parsed = Number(contractCycleMonthsRaw);
+    if (!CONTRACT_CYCLE_MONTHS_OPTIONS.includes(parsed)) {
+      redirect(billingUrl(clientId, { error: "契約サイクルの指定が不正です。" }));
+    }
+    contractCycleMonths = parsed;
+  }
+
+  let renewalMonth: number | null = null;
+  if (renewalMonthRaw !== null) {
+    const parsed = Number(renewalMonthRaw);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 12) {
+      redirect(billingUrl(clientId, { error: "更新月の指定が不正です。" }));
+    }
+    renewalMonth = parsed;
+  }
+
+  // activity_logsへの記録はDB trigger(log_client_billing_profile_change)側で行うため、
+  // ここでは二重記録しない。
+  const { error } = await supabase.from("client_billing_profiles").upsert(
+    {
+      client_id: clientId,
+      invoice_required: invoiceRequired,
+      billing_company_name: billingCompanyName,
+      billing_contact_name: billingContactName,
+      billing_email: billingEmail,
+      billing_cc_email: billingCcEmail,
+      billing_method: billingMethod,
+      billing_postal_address: billingPostalAddress,
+      contract_cycle_months: contractCycleMonths,
+      renewal_month: renewalMonth,
+      billing_notes: billingNotes,
+    },
+    { onConflict: "client_id" },
+  );
+
+  redirect(billingUrl(clientId, error ? { error: error.message } : { saved: "1" }));
 }
 
 export async function updateOperationProfileAction(formData: FormData) {

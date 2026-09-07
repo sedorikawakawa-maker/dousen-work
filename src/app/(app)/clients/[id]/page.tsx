@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getCurrentStaff } from "@/lib/auth/session";
+import { canViewFinance } from "@/lib/auth/roles";
+import { getClientBillingProfile } from "@/lib/billing/queries";
 import {
   getClientDetail,
   listActiveStaff,
@@ -44,6 +47,7 @@ import {
   issueMaterialFormTokenAction,
   removeClientThumbnailAction,
   revokeMaterialFormTokenAction,
+  saveClientBillingProfileAction,
   updateTaskScheduledDateAction,
   uploadClientThumbnailAction,
 } from "./actions";
@@ -51,6 +55,7 @@ import {
 const TABS = [
   { key: "overview", label: "概要" },
   { key: "contract", label: "契約・担当" },
+  { key: "billing", label: "請求・売上" },
   { key: "profile", label: "制作方針" },
   { key: "schedule", label: "投稿スケジュール" },
   { key: "consumption", label: "運用・消化" },
@@ -67,11 +72,15 @@ type TabKey = (typeof TABS)[number]["key"];
 
 /** タブの並び・キー・URLパラメータは変えず、見た目のグルーピングだけに使う。 */
 const TAB_GROUPS: { label: string; keys: TabKey[] }[] = [
-  { label: "基本", keys: ["overview", "contract"] },
+  { label: "基本", keys: ["overview", "contract", "billing"] },
   { label: "制作・運用", keys: ["profile", "schedule", "consumption"] },
   { label: "やり取り", keys: ["materials", "productionVideos", "posts", "confirmations"] },
   { label: "参照情報", keys: ["links", "credentials", "history"] },
 ];
+
+// 請求・売上はpresident/executive/employeeのみ。CSSで隠すだけでなく、タブ一覧・URL直接
+// 指定・下部のフォーム自体すべてをこの判定でサーバー側から除外する。
+const FINANCE_ONLY_TABS: readonly TabKey[] = ["billing"];
 
 const NOT_YET_IMPLEMENTED: Partial<Record<TabKey, string>> = {
   consumption: "Phase 4（担当者ダッシュボード）以降で実装予定です。",
@@ -86,8 +95,18 @@ export default async function ClientDetailPage({
 }) {
   const { id } = await params;
   const { tab, newToken, saved, error } = await searchParams;
-  const activeTab: TabKey = TABS.some((t) => t.key === tab) ? (tab as TabKey) : "overview";
-  const activeGroup = TAB_GROUPS.find((group) => group.keys.includes(activeTab)) ?? TAB_GROUPS[0];
+
+  const staff = await getCurrentStaff();
+  const canSeeBilling = staff ? canViewFinance(staff.role) : false;
+  const isTabVisible = (key: TabKey) => canSeeBilling || !FINANCE_ONLY_TABS.includes(key);
+  const visibleTabs = TABS.filter((t) => isTabVisible(t.key));
+  const visibleGroups = TAB_GROUPS.map((group) => ({
+    ...group,
+    keys: group.keys.filter(isTabVisible),
+  })).filter((group) => group.keys.length > 0);
+
+  const activeTab: TabKey = visibleTabs.some((t) => t.key === tab) ? (tab as TabKey) : "overview";
+  const activeGroup = visibleGroups.find((group) => group.keys.includes(activeTab)) ?? visibleGroups[0];
 
   const supabase = await createSupabaseServerClient();
   const [detail, staffOptions] = await Promise.all([
@@ -136,6 +155,9 @@ export default async function ClientDetailPage({
       newlyIssuedFormUrl = await buildMaterialFormUrl(newToken);
     }
   }
+
+  const billingProfile =
+    activeTab === "billing" && canSeeBilling ? await getClientBillingProfile(supabase, id) : null;
 
   let confirmations: Awaited<ReturnType<typeof listClientConfirmationsForClient>> = [];
   if (activeTab === "confirmations") {
@@ -250,7 +272,7 @@ export default async function ClientDetailPage({
 
       <div className="flex flex-col gap-2">
         <nav className="grid grid-cols-4 gap-1 rounded-2xl bg-neutral-100 p-1">
-          {TAB_GROUPS.map((group) => {
+          {visibleGroups.map((group) => {
             const isActiveGroup = group === activeGroup;
             return (
               <Link
@@ -365,6 +387,170 @@ export default async function ClientDetailPage({
                   <li className="text-neutral-400">担当履歴がありません</li>
                 ) : null}
               </ul>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === "billing" && canSeeBilling ? (
+          <div className="flex flex-col gap-6">
+            {saved ? (
+              <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">保存しました。</p>
+            ) : null}
+            {error ? (
+              <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            ) : null}
+
+            <div>
+              <h3 className="mb-3 text-sm font-semibold text-neutral-700">請求基本情報</h3>
+              <form action={saveClientBillingProfileAction} className="flex flex-col gap-4">
+                <input type="hidden" name="clientId" value={id} />
+
+                <fieldset className="flex flex-col gap-2">
+                  <legend className="text-sm font-medium text-neutral-700">請求書送付</legend>
+                  <label className="flex items-center gap-2 text-sm text-neutral-700">
+                    <input
+                      type="radio"
+                      name="invoiceRequired"
+                      value="true"
+                      defaultChecked={billingProfile?.invoice_required ?? true}
+                    />
+                    必要
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-neutral-700">
+                    <input
+                      type="radio"
+                      name="invoiceRequired"
+                      value="false"
+                      defaultChecked={billingProfile?.invoice_required === false}
+                    />
+                    不要
+                  </label>
+                  {billingProfile?.invoice_required === false ? (
+                    <p className="text-xs text-neutral-500">
+                      請求書不要の場合、今後の自動請求生成対象外になります。
+                    </p>
+                  ) : null}
+                </fieldset>
+
+                <label className="text-sm font-medium text-neutral-700">
+                  請求書宛名
+                  <input
+                    name="billingCompanyName"
+                    type="text"
+                    defaultValue={billingProfile?.billing_company_name ?? client.company_name}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  />
+                </label>
+
+                <label className="text-sm font-medium text-neutral-700">
+                  請求担当者名
+                  <input
+                    name="billingContactName"
+                    type="text"
+                    defaultValue={billingProfile?.billing_contact_name ?? ""}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  />
+                </label>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-medium text-neutral-700">
+                    請求書送付先メールアドレス
+                    <input
+                      name="billingEmail"
+                      type="email"
+                      defaultValue={billingProfile?.billing_email ?? ""}
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    CCメールアドレス（任意）
+                    <input
+                      name="billingCcEmail"
+                      type="email"
+                      defaultValue={billingProfile?.billing_cc_email ?? ""}
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                </div>
+
+                <label className="text-sm font-medium text-neutral-700">
+                  送付方法
+                  <select
+                    name="billingMethod"
+                    defaultValue={billingProfile?.billing_method ?? ""}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  >
+                    <option value="">未設定</option>
+                    <option value="email">メール</option>
+                    <option value="postal">郵送</option>
+                    <option value="other">その他</option>
+                  </select>
+                </label>
+
+                <label className="text-sm font-medium text-neutral-700">
+                  郵送先
+                  <textarea
+                    name="billingPostalAddress"
+                    rows={2}
+                    defaultValue={billingProfile?.billing_postal_address ?? ""}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  />
+                </label>
+
+                <div className="grid grid-cols-1 gap-4 border-t border-neutral-100 pt-4 sm:grid-cols-2">
+                  <InfoRow label="契約開始日" value={client.contract_start_date ?? "未設定"} />
+                  <InfoRow label="契約終了予定日" value={client.contract_end_date ?? "未設定"} />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-medium text-neutral-700">
+                    契約サイクル
+                    <select
+                      name="contractCycleMonths"
+                      defaultValue={billingProfile?.contract_cycle_months?.toString() ?? ""}
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    >
+                      <option value="">未設定</option>
+                      <option value="1">1か月</option>
+                      <option value="3">3か月</option>
+                      <option value="6">6か月</option>
+                      <option value="12">12か月</option>
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    更新月
+                    <select
+                      name="renewalMonth"
+                      defaultValue={billingProfile?.renewal_month?.toString() ?? ""}
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    >
+                      <option value="">未設定</option>
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => (
+                        <option key={month} value={month}>
+                          {month}月
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <label className="text-sm font-medium text-neutral-700">
+                  請求に関する備考
+                  <textarea
+                    name="billingNotes"
+                    rows={3}
+                    defaultValue={billingProfile?.billing_notes ?? ""}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  className="mt-2 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white hover:bg-[var(--accent-strong)] sm:w-auto"
+                >
+                  保存する
+                </button>
+              </form>
             </div>
           </div>
         ) : null}
