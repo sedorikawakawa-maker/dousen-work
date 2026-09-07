@@ -24,6 +24,19 @@ function monthToIso(year: number, month0: number): string {
   return `${year}-${String(month0 + 1).padStart(2, "0")}-01`;
 }
 
+/** JST（UTC+9固定）での「現在月」の月初日。/management/billingの初期表示月に使う。 */
+export function currentMonthIsoJst(): string {
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  return monthToIso(jstNow.getUTCFullYear(), jstNow.getUTCMonth());
+}
+
+/** 'YYYY-MM-DD'（月初日）を'YYYY年M月'として表示する。日はユーザーに意識させない。 */
+export function formatMonthLabel(monthIso: string | null): string {
+  if (!monthIso) return "未設定";
+  const [y, m] = monthIso.split("-");
+  return `${y}年${Number(m)}月`;
+}
+
 /** 月初日文字列に対して、タイムゾーンに依存しない整数演算だけで月を加減する。 */
 export function addMonthsIso(monthIso: string, delta: number): string {
   const [y, m] = monthIso.split("-").map(Number);
@@ -125,10 +138,10 @@ async function insertInvoiceItemIfMissing(
     unitPriceExTax: number;
     notes: string | null;
   },
-): Promise<void> {
+): Promise<boolean> {
   // prepared/sentのinvoiceには、既存invoice_itemsだけでなく新規追加も一切行わない
   // （自動生成・rule変更処理が確定済み請求書を静かに変えてしまうことを防ぐ）。
-  if (input.invoice.status !== "planned") return;
+  if (input.invoice.status !== "planned") return false;
 
   const { data: existing } = await supabase
     .from("invoice_items")
@@ -137,7 +150,7 @@ async function insertInvoiceItemIfMissing(
     .eq("billing_month", input.billingMonth)
     .is("cancelled_at", null)
     .maybeSingle();
-  if (existing) return;
+  if (existing) return false;
 
   const { error } = await supabase.from("invoice_items").insert({
     invoice_id: input.invoice.id,
@@ -157,7 +170,11 @@ async function insertInvoiceItemIfMissing(
     cancel_reason: null,
   });
 
-  if (error && error.code !== "23505") throw error;
+  if (error) {
+    if (error.code === "23505") return false;
+    throw error;
+  }
+  return true;
 }
 
 /**
@@ -170,15 +187,16 @@ async function insertInvoiceItemIfMissing(
 export async function generateInvoiceItemsForRecurringRule(
   supabase: TypedClient,
   rule: BillingRuleRow,
-): Promise<void> {
-  if (rule.billing_type !== "recurring" || !rule.is_active || !rule.valid_from) return;
+): Promise<number> {
+  if (rule.billing_type !== "recurring" || !rule.is_active || !rule.valid_from) return 0;
 
   const { profile, clientRow } = await getClientBillingContext(supabase, rule.client_id);
-  if (!clientRow) return;
-  if (profile && profile.invoice_required === false) return;
+  if (!clientRow) return 0;
+  if (profile && profile.invoice_required === false) return 0;
 
   const contractEndMonthIso = clientRow.contract_end_date ? truncateToMonthIso(clientRow.contract_end_date) : null;
 
+  let insertedCount = 0;
   for (const { year, month0 } of rollingWindowMonths()) {
     const billingMonth = monthToIso(year, month0);
     if (billingMonth < rule.valid_from) continue;
@@ -187,7 +205,7 @@ export async function generateInvoiceItemsForRecurringRule(
 
     const revenueMonth = addMonthsIso(billingMonth, rule.revenue_month_offset_months);
     const invoice = await getOrCreateInvoice(supabase, rule.client_id, billingMonth, profile, clientRow.company_name);
-    await insertInvoiceItemIfMissing(supabase, {
+    const inserted = await insertInvoiceItemIfMissing(supabase, {
       invoice,
       clientId: rule.client_id,
       billingRuleId: rule.id,
@@ -199,7 +217,34 @@ export async function generateInvoiceItemsForRecurringRule(
       unitPriceExTax: rule.unit_price_ex_tax,
       notes: rule.notes,
     });
+    if (inserted) insertedCount += 1;
   }
+  return insertedCount;
+}
+
+/**
+ * 全クライアントの有効な定期ruleについて、現在月+2か月のローリング窓の不足分だけを
+ * まとめて補完する（/management/billing表示時に1回だけ呼ばれる想定）。
+ * 呼び出し対象はis_active=trueのrecurring ruleのみ。invoice_required=false・
+ * valid_from/valid_to範囲外・contract_end_date超過・prepared/sent invoiceは
+ * generateInvoiceItemsForRecurringRule内部のガードでそれぞれスキップされる。
+ */
+export async function ensureBillingRollingWindowForAllClients(
+  supabase: TypedClient,
+): Promise<{ rulesProcessed: number; itemsGenerated: number }> {
+  const { data: rules, error } = await supabase
+    .from("billing_rules")
+    .select("*")
+    .eq("billing_type", "recurring")
+    .eq("is_active", true);
+  if (error) throw error;
+  if (!rules || rules.length === 0) return { rulesProcessed: 0, itemsGenerated: 0 };
+
+  let itemsGenerated = 0;
+  for (const rule of rules) {
+    itemsGenerated += await generateInvoiceItemsForRecurringRule(supabase, rule);
+  }
+  return { rulesProcessed: rules.length, itemsGenerated };
 }
 
 export interface OneTimeGenerationResult {
