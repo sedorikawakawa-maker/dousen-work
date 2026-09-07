@@ -6,6 +6,14 @@ import { getCurrentStaff } from "@/lib/auth/session";
 import { canViewFinance } from "@/lib/auth/roles";
 import { requireBillingAccess } from "@/lib/billing/authGuard";
 import {
+  deactivateRecurringBillingRule,
+  generateInvoiceItemForOneTimeRule,
+  generateInvoiceItemsForRecurringRule,
+  monthInputToIso,
+  REVENUE_MONTH_OFFSET_OPTIONS,
+  splitAndReplaceRecurringBillingRule,
+} from "@/lib/billing/generate";
+import {
   generateTasksForRule,
   regenerateTasksForRule,
   removeUnstartedFutureTasksForRule,
@@ -369,6 +377,236 @@ export async function saveClientBillingProfileAction(formData: FormData) {
   );
 
   redirect(billingUrl(clientId, error ? { error: error.message } : { saved: "1" }));
+}
+
+const REVENUE_MONTH_OFFSETS = REVENUE_MONTH_OFFSET_OPTIONS.map((o) => o.value);
+
+/** 定期請求設定の新規作成。作成直後にローリング窓（現在月+2か月）分を即時生成する。 */
+export async function createRecurringBillingRuleAction(formData: FormData) {
+  const staff = await requireBillingAccess();
+  const clientId = String(formData.get("clientId") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  const { data: client } = await supabase.from("clients_view").select("id").eq("id", clientId).maybeSingle();
+  if (!client) {
+    redirect(billingUrl(clientId, { error: "顧客が見つかりません。" }));
+  }
+
+  const subject = String(formData.get("subject") ?? "").trim();
+  if (!subject) {
+    redirect(billingUrl(clientId, { error: "件名を入力してください。" }));
+  }
+  const quantity = Number(formData.get("quantity") ?? "1");
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    redirect(billingUrl(clientId, { error: "数量は0より大きい数値で入力してください。" }));
+  }
+  const unitPriceExTax = Number(formData.get("unitPriceExTax") ?? "");
+  if (!Number.isFinite(unitPriceExTax) || unitPriceExTax < 0) {
+    redirect(billingUrl(clientId, { error: "単価は0以上の数値で入力してください。" }));
+  }
+  const validFrom = monthInputToIso(formData.get("validFrom") as string | null);
+  if (!validFrom) {
+    redirect(billingUrl(clientId, { error: "適用開始月を入力してください。" }));
+  }
+  const validToRaw = emptyToNull(formData.get("validTo"));
+  const validTo = validToRaw ? monthInputToIso(validToRaw) : null;
+  if (validToRaw && !validTo) {
+    redirect(billingUrl(clientId, { error: "適用終了月の形式が不正です。" }));
+  }
+  const revenueMonthOffset = Number(formData.get("revenueMonthOffset") ?? "0");
+  if (!REVENUE_MONTH_OFFSETS.includes(revenueMonthOffset as (typeof REVENUE_MONTH_OFFSETS)[number])) {
+    redirect(billingUrl(clientId, { error: "売上計上月の指定が不正です。" }));
+  }
+
+  const { data: newRule, error } = await supabase
+    .from("billing_rules")
+    .insert({
+      client_id: clientId,
+      billing_type: "recurring",
+      subject,
+      description: emptyToNull(formData.get("description")),
+      quantity,
+      unit_price_ex_tax: unitPriceExTax,
+      notes: emptyToNull(formData.get("notes")),
+      valid_from: validFrom,
+      valid_to: validTo,
+      revenue_month_offset_months: revenueMonthOffset,
+      one_time_billing_month: null,
+      one_time_revenue_month: null,
+      is_active: true,
+      created_by_staff_id: staff.id,
+    })
+    .select("*")
+    .single();
+
+  if (error || !newRule) {
+    redirect(billingUrl(clientId, { error: error?.message ?? "登録に失敗しました" }));
+  }
+
+  await generateInvoiceItemsForRecurringRule(supabase, newRule);
+
+  redirect(billingUrl(clientId, { saved: "1" }));
+}
+
+/**
+ * スポット請求追加。one_time ruleを作成し、ローリング窓に制限せずその場で
+ * 指定請求月のinvoice/invoice_itemを即時生成する。
+ */
+export async function createOneTimeBillingRuleAction(formData: FormData) {
+  const staff = await requireBillingAccess();
+  const clientId = String(formData.get("clientId") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  const { data: client } = await supabase.from("clients_view").select("id").eq("id", clientId).maybeSingle();
+  if (!client) {
+    redirect(billingUrl(clientId, { error: "顧客が見つかりません。" }));
+  }
+
+  const subject = String(formData.get("subject") ?? "").trim();
+  if (!subject) {
+    redirect(billingUrl(clientId, { error: "件名を入力してください。" }));
+  }
+  const quantity = Number(formData.get("quantity") ?? "1");
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    redirect(billingUrl(clientId, { error: "数量は0より大きい数値で入力してください。" }));
+  }
+  const unitPriceExTax = Number(formData.get("unitPriceExTax") ?? "");
+  if (!Number.isFinite(unitPriceExTax) || unitPriceExTax < 0) {
+    redirect(billingUrl(clientId, { error: "単価は0以上の数値で入力してください。" }));
+  }
+  const billingMonth = monthInputToIso(formData.get("billingMonth") as string | null);
+  if (!billingMonth) {
+    redirect(billingUrl(clientId, { error: "請求月を入力してください。" }));
+  }
+  const revenueMonthRaw = emptyToNull(formData.get("revenueMonth"));
+  const revenueMonth = (revenueMonthRaw ? monthInputToIso(revenueMonthRaw) : null) ?? billingMonth;
+
+  const { data: newRule, error } = await supabase
+    .from("billing_rules")
+    .insert({
+      client_id: clientId,
+      billing_type: "one_time",
+      subject,
+      description: emptyToNull(formData.get("description")),
+      quantity,
+      unit_price_ex_tax: unitPriceExTax,
+      notes: emptyToNull(formData.get("notes")),
+      revenue_month_offset_months: 0,
+      valid_from: null,
+      valid_to: null,
+      one_time_billing_month: billingMonth,
+      one_time_revenue_month: revenueMonth,
+      is_active: true,
+      created_by_staff_id: staff.id,
+    })
+    .select("*")
+    .single();
+
+  if (error || !newRule) {
+    redirect(billingUrl(clientId, { error: error?.message ?? "登録に失敗しました" }));
+  }
+
+  const result = await generateInvoiceItemForOneTimeRule(supabase, newRule);
+  if (result.skipped) {
+    const reasonMessage =
+      result.reason === "invoice_required_false"
+        ? "この顧客は請求書送付不要のため、明細は生成されませんでした（設定は保存済みです）。"
+        : result.reason === "after_contract_end"
+          ? "契約終了予定日より後の月のため、明細は生成されませんでした（設定は保存済みです）。"
+          : result.reason === "invoice_locked"
+            ? "対象月の請求書は既に作成済み/送付済みのため、明細は生成されませんでした（設定は保存済みです）。"
+            : "明細の生成に失敗しました（設定は保存済みです）。";
+    redirect(billingUrl(clientId, { error: reasonMessage }));
+  }
+
+  redirect(billingUrl(clientId, { saved: "1" }));
+}
+
+/**
+ * 「この月から内容を変更」。既存ruleを上書きせず、旧ruleを変更開始月の前月で終了させ、
+ * 新ruleを新しい内容で作成する。旧rule由来の未来plannedのみ取消し、新ruleから再生成する。
+ */
+export async function changeRecurringBillingRuleFromMonthAction(formData: FormData) {
+  const staff = await requireBillingAccess();
+  const clientId = String(formData.get("clientId") ?? "").trim();
+  const ruleId = String(formData.get("ruleId") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  const { data: oldRule } = await supabase
+    .from("billing_rules")
+    .select("*")
+    .eq("id", ruleId)
+    .eq("client_id", clientId)
+    .eq("billing_type", "recurring")
+    .maybeSingle();
+  if (!oldRule || !oldRule.valid_from) {
+    redirect(billingUrl(clientId, { error: "変更対象の請求設定が見つかりません。" }));
+  }
+  if (oldRule.valid_to !== null) {
+    redirect(
+      billingUrl(clientId, {
+        error: "この設定は既に終了日が設定されているため変更できません。最新の設定から変更してください。",
+      }),
+    );
+  }
+
+  const subject = String(formData.get("subject") ?? "").trim();
+  if (!subject) {
+    redirect(billingUrl(clientId, { error: "件名を入力してください。" }));
+  }
+  const quantity = Number(formData.get("quantity") ?? "1");
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    redirect(billingUrl(clientId, { error: "数量は0より大きい数値で入力してください。" }));
+  }
+  const unitPriceExTax = Number(formData.get("unitPriceExTax") ?? "");
+  if (!Number.isFinite(unitPriceExTax) || unitPriceExTax < 0) {
+    redirect(billingUrl(clientId, { error: "単価は0以上の数値で入力してください。" }));
+  }
+  const changeFromMonth = monthInputToIso(formData.get("changeFromMonth") as string | null);
+  if (!changeFromMonth) {
+    redirect(billingUrl(clientId, { error: "変更開始月を入力してください。" }));
+  }
+  if (changeFromMonth <= oldRule.valid_from) {
+    redirect(billingUrl(clientId, { error: "変更開始月は現在の適用開始月より後にしてください。" }));
+  }
+
+  const { error } = await splitAndReplaceRecurringBillingRule(
+    supabase,
+    oldRule,
+    changeFromMonth,
+    {
+      subject,
+      description: emptyToNull(formData.get("description")),
+      quantity,
+      unitPriceExTax,
+      notes: emptyToNull(formData.get("notes")),
+    },
+    staff.id,
+  );
+
+  redirect(billingUrl(clientId, error ? { error } : { saved: "1" }));
+}
+
+/** 定期請求設定の停止。is_active=falseにし、今日の月以降・未確定(planned)のinvoice_itemsのみ取消する。 */
+export async function deactivateBillingRuleAction(formData: FormData) {
+  await requireBillingAccess();
+  const clientId = String(formData.get("clientId") ?? "").trim();
+  const ruleId = String(formData.get("ruleId") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  const { data: rule } = await supabase
+    .from("billing_rules")
+    .select("id")
+    .eq("id", ruleId)
+    .eq("client_id", clientId)
+    .maybeSingle();
+  if (!rule) {
+    redirect(billingUrl(clientId, { error: "対象の請求設定が見つかりません。" }));
+  }
+
+  const { error } = await deactivateRecurringBillingRule(supabase, ruleId);
+
+  redirect(billingUrl(clientId, error ? { error } : { saved: "1" }));
 }
 
 export async function updateOperationProfileAction(formData: FormData) {

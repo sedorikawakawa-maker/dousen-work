@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { canViewFinance } from "@/lib/auth/roles";
-import { getClientBillingProfile } from "@/lib/billing/queries";
+import { REVENUE_MONTH_OFFSET_OPTIONS } from "@/lib/billing/generate";
+import {
+  getClientBillingProfile,
+  listRecurringBillingRulesForClient,
+  listUpcomingInvoiceItemsForClient,
+} from "@/lib/billing/queries";
 import {
   getClientDetail,
   listActiveStaff,
@@ -44,6 +49,10 @@ import { PageContainer } from "@/components/PageContainer";
 import { ClientAvatar } from "@/components/ClientAvatar";
 import {
   addMaterialAction,
+  changeRecurringBillingRuleFromMonthAction,
+  createOneTimeBillingRuleAction,
+  createRecurringBillingRuleAction,
+  deactivateBillingRuleAction,
   issueMaterialFormTokenAction,
   removeClientThumbnailAction,
   revokeMaterialFormTokenAction,
@@ -156,8 +165,16 @@ export default async function ClientDetailPage({
     }
   }
 
-  const billingProfile =
-    activeTab === "billing" && canSeeBilling ? await getClientBillingProfile(supabase, id) : null;
+  let billingProfile: Awaited<ReturnType<typeof getClientBillingProfile>> = null;
+  let recurringBillingRules: Awaited<ReturnType<typeof listRecurringBillingRulesForClient>> = [];
+  let upcomingInvoiceItems: Awaited<ReturnType<typeof listUpcomingInvoiceItemsForClient>> = [];
+  if (activeTab === "billing" && canSeeBilling) {
+    [billingProfile, recurringBillingRules, upcomingInvoiceItems] = await Promise.all([
+      getClientBillingProfile(supabase, id),
+      listRecurringBillingRulesForClient(supabase, id),
+      listUpcomingInvoiceItemsForClient(supabase, id),
+    ]);
+  }
 
   let confirmations: Awaited<ReturnType<typeof listClientConfirmationsForClient>> = [];
   if (activeTab === "confirmations") {
@@ -551,6 +568,374 @@ export default async function ClientDetailPage({
                   保存する
                 </button>
               </form>
+            </div>
+
+            <div className="border-t border-neutral-100 pt-6">
+              <h3 className="mb-3 text-sm font-semibold text-neutral-700">定期請求設定</h3>
+              <ul className="flex flex-col gap-2 text-sm">
+                {recurringBillingRules.map((rule) => {
+                  const monthlyAmount = rule.quantity * rule.unit_price_ex_tax;
+                  const isEditable = rule.is_active && rule.valid_to === null;
+                  return (
+                    <li key={rule.id} className="rounded-md border border-neutral-200 px-3 py-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className="font-medium">{rule.subject}</span>
+                          {rule.description ? (
+                            <span className="ml-2 text-xs text-neutral-500">{rule.description}</span>
+                          ) : null}
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${
+                            rule.is_active
+                              ? "bg-[var(--accent-soft-bg)] text-[var(--accent-soft-text)]"
+                              : "bg-neutral-100 text-neutral-400"
+                          }`}
+                        >
+                          {rule.is_active ? "有効" : "無効"}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-neutral-500">
+                        数量 {rule.quantity} × 単価 {rule.unit_price_ex_tax.toLocaleString("ja-JP")}円 = 月額{" "}
+                        {monthlyAmount.toLocaleString("ja-JP")}円（税抜） ・ 適用開始 {formatMonthLabel(rule.valid_from)}{" "}
+                        〜 {formatMonthLabel(rule.valid_to)} ・ 売上計上月:{" "}
+                        {revenueMonthOffsetLabel(rule.revenue_month_offset_months)}
+                        {rule.notes ? ` ・ 備考: ${rule.notes}` : ""}
+                      </p>
+
+                      {isEditable ? (
+                        <div className="mt-2 flex flex-wrap gap-3">
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-[var(--accent-strong)] underline">
+                              この月から内容を変更
+                            </summary>
+                            <form
+                              action={changeRecurringBillingRuleFromMonthAction}
+                              className="mt-2 flex flex-col gap-2 rounded-md border border-neutral-200 p-3"
+                            >
+                              <input type="hidden" name="clientId" value={id} />
+                              <input type="hidden" name="ruleId" value={rule.id} />
+                              <label className="text-xs font-medium text-neutral-700">
+                                変更開始月
+                                <input
+                                  name="changeFromMonth"
+                                  type="month"
+                                  required
+                                  className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                                />
+                              </label>
+                              <label className="text-xs font-medium text-neutral-700">
+                                件名
+                                <input
+                                  name="subject"
+                                  type="text"
+                                  required
+                                  defaultValue={rule.subject}
+                                  className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                                />
+                              </label>
+                              <label className="text-xs font-medium text-neutral-700">
+                                摘要
+                                <input
+                                  name="description"
+                                  type="text"
+                                  defaultValue={rule.description ?? ""}
+                                  className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                                />
+                              </label>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="text-xs font-medium text-neutral-700">
+                                  数量
+                                  <input
+                                    name="quantity"
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    required
+                                    defaultValue={rule.quantity}
+                                    className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                                  />
+                                </label>
+                                <label className="text-xs font-medium text-neutral-700">
+                                  単価（税抜）
+                                  <input
+                                    name="unitPriceExTax"
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    required
+                                    defaultValue={rule.unit_price_ex_tax}
+                                    className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                                  />
+                                </label>
+                              </div>
+                              <label className="text-xs font-medium text-neutral-700">
+                                備考
+                                <input
+                                  name="notes"
+                                  type="text"
+                                  defaultValue={rule.notes ?? ""}
+                                  className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                                />
+                              </label>
+                              <p className="text-[11px] text-neutral-500">
+                                既存の設定は変更開始月の前月までで終了し、新しい内容の設定を新規作成します。過去の請求実績は変わりません。
+                              </p>
+                              <button
+                                type="submit"
+                                className="mt-1 rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700"
+                              >
+                                この内容で変更する
+                              </button>
+                            </form>
+                          </details>
+
+                          <form action={deactivateBillingRuleAction}>
+                            <input type="hidden" name="clientId" value={id} />
+                            <input type="hidden" name="ruleId" value={rule.id} />
+                            <button type="submit" className="text-xs text-red-600 underline">
+                              停止する
+                            </button>
+                          </form>
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+                {recurringBillingRules.length === 0 ? (
+                  <li className="text-neutral-400">定期請求設定はまだありません。</li>
+                ) : null}
+              </ul>
+
+              <details className="mt-3 text-sm">
+                <summary className="cursor-pointer text-[var(--accent-strong)] underline">
+                  ＋ 定期請求設定を追加
+                </summary>
+                <form
+                  action={createRecurringBillingRuleAction}
+                  className="mt-3 flex flex-col gap-3 rounded-md border border-neutral-200 p-3"
+                >
+                  <input type="hidden" name="clientId" value={id} />
+                  <label className="text-sm font-medium text-neutral-700">
+                    件名
+                    <input
+                      name="subject"
+                      type="text"
+                      required
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    摘要（任意）
+                    <input
+                      name="description"
+                      type="text"
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-medium text-neutral-700">
+                      数量
+                      <input
+                        name="quantity"
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        required
+                        defaultValue="1"
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-neutral-700">
+                      単価（税抜）
+                      <input
+                        name="unitPriceExTax"
+                        type="number"
+                        step="1"
+                        min="0"
+                        required
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-medium text-neutral-700">
+                      適用開始月
+                      <input
+                        name="validFrom"
+                        type="month"
+                        required
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-neutral-700">
+                      適用終了月（任意）
+                      <input
+                        name="validTo"
+                        type="month"
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                  </div>
+                  <label className="text-sm font-medium text-neutral-700">
+                    売上計上月
+                    <select
+                      name="revenueMonthOffset"
+                      defaultValue="0"
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    >
+                      {REVENUE_MONTH_OFFSET_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    備考
+                    <input
+                      name="notes"
+                      type="text"
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="mt-1 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white hover:bg-[var(--accent-strong)] sm:w-auto"
+                  >
+                    追加する
+                  </button>
+                </form>
+              </details>
+            </div>
+
+            <div className="border-t border-neutral-100 pt-6">
+              <h3 className="mb-3 text-sm font-semibold text-neutral-700">スポット請求追加</h3>
+              <details className="text-sm">
+                <summary className="cursor-pointer text-[var(--accent-strong)] underline">＋ スポット請求を追加</summary>
+                <form
+                  action={createOneTimeBillingRuleAction}
+                  className="mt-3 flex flex-col gap-3 rounded-md border border-neutral-200 p-3"
+                >
+                  <input type="hidden" name="clientId" value={id} />
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-medium text-neutral-700">
+                      請求月
+                      <input
+                        name="billingMonth"
+                        type="month"
+                        required
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-neutral-700">
+                      売上計上月（未指定なら請求月と同じ）
+                      <input
+                        name="revenueMonth"
+                        type="month"
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                  </div>
+                  <label className="text-sm font-medium text-neutral-700">
+                    件名
+                    <input
+                      name="subject"
+                      type="text"
+                      required
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    摘要（任意）
+                    <input
+                      name="description"
+                      type="text"
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-medium text-neutral-700">
+                      数量
+                      <input
+                        name="quantity"
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        required
+                        defaultValue="1"
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-neutral-700">
+                      単価（税抜）
+                      <input
+                        name="unitPriceExTax"
+                        type="number"
+                        step="1"
+                        min="0"
+                        required
+                        className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                      />
+                    </label>
+                  </div>
+                  <label className="text-sm font-medium text-neutral-700">
+                    備考
+                    <input
+                      name="notes"
+                      type="text"
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="mt-1 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white hover:bg-[var(--accent-strong)] sm:w-auto"
+                  >
+                    追加する
+                  </button>
+                </form>
+              </details>
+            </div>
+
+            <div className="border-t border-neutral-100 pt-6">
+              <h3 className="mb-3 text-sm font-semibold text-neutral-700">請求予定（直近）</h3>
+              {upcomingInvoiceItems.length === 0 ? (
+                <p className="text-sm text-neutral-400">生成済みの請求予定はまだありません。</p>
+              ) : (
+                <ul className="flex flex-col gap-3 text-sm">
+                  {groupInvoiceItemsByMonth(upcomingInvoiceItems).map(([month, items]) => (
+                    <li key={month}>
+                      <p className="mb-1 text-xs font-semibold text-neutral-500">{formatMonthLabel(month)}</p>
+                      <ul className="flex flex-col gap-1">
+                        {items.map((item) => {
+                          const amount = item.amount_override ?? item.tax_excluded_amount;
+                          return (
+                            <li
+                              key={item.id}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-neutral-200 px-3 py-2"
+                            >
+                              <span>
+                                {item.subject}
+                                {item.revenue_month !== item.billing_month ? (
+                                  <span className="ml-2 text-xs text-neutral-400">
+                                    （売上計上: {formatMonthLabel(item.revenue_month)}）
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="flex items-center gap-2">
+                                <span className="font-medium tabular-nums">{amount.toLocaleString("ja-JP")}円</span>
+                                <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                                  {INVOICE_STATUS_LABELS[item.invoices?.status ?? "planned"]}
+                                </span>
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         ) : null}
@@ -1214,6 +1599,33 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <dd className="text-neutral-900">{value}</dd>
     </div>
   );
+}
+
+const INVOICE_STATUS_LABELS: Record<string, string> = {
+  planned: "請求予定",
+  prepared: "請求書作成済",
+  sent: "送付済み",
+};
+
+/** 'YYYY-MM-DD'（月初日）を'YYYY年M月'として表示する。日はユーザーに意識させない。 */
+function formatMonthLabel(monthIso: string | null): string {
+  if (!monthIso) return "未設定";
+  const [y, m] = monthIso.split("-");
+  return `${y}年${Number(m)}月`;
+}
+
+function revenueMonthOffsetLabel(offset: number): string {
+  return REVENUE_MONTH_OFFSET_OPTIONS.find((o) => o.value === offset)?.label ?? `${offset}か月`;
+}
+
+function groupInvoiceItemsByMonth<T extends { billing_month: string }>(items: T[]): [string, T[]][] {
+  const map = new Map<string, T[]>();
+  for (const item of items) {
+    const list = map.get(item.billing_month) ?? [];
+    list.push(item);
+    map.set(item.billing_month, list);
+  }
+  return Array.from(map.entries());
 }
 
 function MaterialFields() {
