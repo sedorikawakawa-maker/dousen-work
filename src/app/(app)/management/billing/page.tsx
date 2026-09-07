@@ -12,7 +12,7 @@ import {
 import { addMonthsIso, currentMonthIsoJst, formatMonthLabel, monthInputToIso } from "@/lib/billing/generate";
 import { PageContainer } from "@/components/PageContainer";
 import { markInvoicePreparedAction, markInvoiceSentAction } from "./actions";
-import { BillingRollingWindowEnsurer } from "./BillingRollingWindowEnsurer";
+import { BillingRollingWindowEnsurer } from "@/components/BillingRollingWindowEnsurer";
 
 const INVOICE_STATUS_LABELS: Record<ManagementInvoiceRow["status"], string> = {
   planned: "請求予定",

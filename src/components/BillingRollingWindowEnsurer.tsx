@@ -2,13 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ensureBillingRollingWindowAction } from "./actions";
+import { ensureBillingRollingWindowAction } from "@/app/(app)/management/billing/actions";
 
 /**
  * ページ表示のたびに1回だけ、現在月+2か月のローリング窓の不足分を補完する。
  * マウント時に一度だけ実行し（refで多重実行を防止）、何か生成された場合のみ
  * router.refresh()でServer Component側の一覧を再取得する。refresh自体はこの
  * コンポーネントを再マウントしないため、無限ループにはならない。
+ * /management/billingと/management/revenueの両方から呼ばれる想定（実装は1箇所のみ）。
  */
 export function BillingRollingWindowEnsurer() {
   const router = useRouter();

@@ -55,6 +55,7 @@ function buildNavGroups(role: StaffRole): NavGroup[] {
     managementItems.push(
       { href: "/management", label: "管理ダッシュボード" },
       { href: "/management/billing", label: "請求管理" },
+      { href: "/management/revenue", label: "売上管理" },
       { href: "/management/staff-progress", label: "担当者別進捗" },
       { href: "/management/settings", label: "システム設定" },
     );
