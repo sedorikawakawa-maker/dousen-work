@@ -87,10 +87,6 @@ const TAB_GROUPS: { label: string; keys: TabKey[] }[] = [
   { label: "参照情報", keys: ["links", "credentials", "history"] },
 ];
 
-// 請求・売上はpresident/executive/employeeのみ。CSSで隠すだけでなく、タブ一覧・URL直接
-// 指定・下部のフォーム自体すべてをこの判定でサーバー側から除外する。
-const FINANCE_ONLY_TABS: readonly TabKey[] = ["billing"];
-
 const NOT_YET_IMPLEMENTED: Partial<Record<TabKey, string>> = {
   consumption: "Phase 4（担当者ダッシュボード）以降で実装予定です。",
 };
@@ -106,8 +102,29 @@ export default async function ClientDetailPage({
   const { tab, newToken, saved, error } = await searchParams;
 
   const staff = await getCurrentStaff();
+  const supabase = await createSupabaseServerClient();
+
   const canSeeBilling = staff ? canViewFinance(staff.role) : false;
-  const isTabVisible = (key: TabKey) => canSeeBilling || !FINANCE_ONLY_TABS.includes(key);
+
+  // ログイン情報タブ: president/executive/employeeは常時閲覧可。part_timeはこの顧客の
+  // 現在有効なclient_assignments（active_to is null、主担当・副担当いずれか）がある場合のみ。
+  let canSeeCredentials = canSeeBilling;
+  if (staff && staff.role === "part_time") {
+    const { data: myAssignment } = await supabase
+      .from("client_assignments")
+      .select("id")
+      .eq("client_id", id)
+      .eq("staff_id", staff.id)
+      .is("active_to", null)
+      .maybeSingle();
+    canSeeCredentials = !!myAssignment;
+  }
+
+  const PER_TAB_VISIBILITY: Partial<Record<TabKey, boolean>> = {
+    billing: canSeeBilling,
+    credentials: canSeeCredentials,
+  };
+  const isTabVisible = (key: TabKey) => PER_TAB_VISIBILITY[key] ?? true;
   const visibleTabs = TABS.filter((t) => isTabVisible(t.key));
   const visibleGroups = TAB_GROUPS.map((group) => ({
     ...group,
@@ -117,7 +134,6 @@ export default async function ClientDetailPage({
   const activeTab: TabKey = visibleTabs.some((t) => t.key === tab) ? (tab as TabKey) : "overview";
   const activeGroup = visibleGroups.find((group) => group.keys.includes(activeTab)) ?? visibleGroups[0];
 
-  const supabase = await createSupabaseServerClient();
   const [detail, staffOptions] = await Promise.all([
     getClientDetail(supabase, id),
     listActiveStaff(supabase),
@@ -1524,9 +1540,37 @@ export default async function ClientDetailPage({
         {activeTab === "credentials" ? (
           <div className="flex flex-col gap-6">
             <div>
-              <h3 className="mb-2 text-sm font-semibold text-neutral-700">ログイン者</h3>
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">顧客のSNS等ログイン情報</h3>
               <p className="mb-2 text-xs text-neutral-500">
-                この顧客のSNS等アカウントへログインできるスタッフです（主担当・副担当とは別の情報です）。
+                パスワード本体はこのシステムには保存されません（保管先URLへのリンクのみ）。追加・編集・削除は顧客編集ページから行えます。
+              </p>
+              <ul className="flex flex-col gap-2 text-sm">
+                {detail.credentials.map((c) => (
+                  <li key={c.id}>
+                    <strong>{c.service_name}</strong>
+                    {c.login_id ? ` / ID: ${c.login_id}` : ""}
+                    {c.password_vault_url ? (
+                      <>
+                        {" / 保管先: "}
+                        <a href={c.password_vault_url} target="_blank" rel="noreferrer" className="underline">
+                          リンク
+                        </a>
+                      </>
+                    ) : (
+                      " / 保管先: —"
+                    )}
+                  </li>
+                ))}
+                {detail.credentials.length === 0 ? (
+                  <li className="text-neutral-400">登録済みのログイン情報はありません。</li>
+                ) : null}
+              </ul>
+            </div>
+
+            <div className="border-t border-neutral-100 pt-4">
+              <h3 className="mb-2 text-sm font-semibold text-neutral-700">社内ログイン可能スタッフ</h3>
+              <p className="mb-2 text-xs text-neutral-500">
+                この顧客のSNS等アカウントへログインできるスタッフです（主担当・副担当や、上記のSNSログイン情報とは別の設定です）。
               </p>
               {loginStaff.length > 0 ? (
                 <ul className="flex flex-wrap gap-1.5">
@@ -1546,28 +1590,6 @@ export default async function ClientDetailPage({
                 <p className="text-sm text-neutral-400">ログイン者は未設定です。</p>
               )}
             </div>
-
-            <ul className="flex flex-col gap-2 border-t border-neutral-100 pt-4 text-sm">
-              {detail.credentials.map((c) => (
-                <li key={c.id}>
-                  <strong>{c.service_name}</strong>
-                  {c.login_id ? ` / ID: ${c.login_id}` : ""}
-                  {c.password_vault_url ? (
-                    <>
-                      {" / 保管先: "}
-                      <a href={c.password_vault_url} target="_blank" rel="noreferrer" className="underline">
-                        リンク
-                      </a>
-                    </>
-                  ) : (
-                    " / 保管先: —"
-                  )}
-                </li>
-              ))}
-              {detail.credentials.length === 0 ? (
-                <li className="text-neutral-400">登録済みのログイン情報はありません。</li>
-              ) : null}
-            </ul>
           </div>
         ) : null}
 

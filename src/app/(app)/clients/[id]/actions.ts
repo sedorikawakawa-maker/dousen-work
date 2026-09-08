@@ -665,21 +665,63 @@ export async function deleteClientLinkAction(formData: FormData) {
   redirect(editUrl(clientId, { saved: "links" }));
 }
 
-export async function addClientCredentialAction(formData: FormData) {
-  const clientId = String(formData.get("clientId"));
+/** password_vault_urlは外部保管先(1Password等)へのリンクのみを想定し、URL形式のみ許可する。 */
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function readCredentialFormFields(formData: FormData): {
+  serviceName: string;
+  loginId: string;
+  passwordVaultUrl: string | null;
+  notes: string | null;
+  error: string | null;
+} {
   const serviceName = String(formData.get("serviceName") ?? "").trim();
-  const supabase = await createSupabaseServerClient();
+  const loginId = String(formData.get("loginId") ?? "").trim();
+  const passwordVaultUrlRaw = emptyToNull(formData.get("passwordVaultUrl"));
+  const notes = emptyToNull(formData.get("notes"));
 
   if (!serviceName) {
-    redirect(editUrl(clientId, { error: "サービス名を入力してください", section: "credentials" }));
+    return { serviceName, loginId, passwordVaultUrl: passwordVaultUrlRaw, notes, error: "サービスを選択してください" };
+  }
+  if (!loginId) {
+    return { serviceName, loginId, passwordVaultUrl: passwordVaultUrlRaw, notes, error: "ログインIDを入力してください" };
+  }
+  if (passwordVaultUrlRaw && !isValidHttpUrl(passwordVaultUrlRaw)) {
+    return {
+      serviceName,
+      loginId,
+      passwordVaultUrl: passwordVaultUrlRaw,
+      notes,
+      error: "パスワード保管先URLの形式が正しくありません（https://... の形式で入力してください）",
+    };
+  }
+  return { serviceName, loginId, passwordVaultUrl: passwordVaultUrlRaw, notes, error: null };
+}
+
+/** SNSログイン情報の追加・編集・削除はpresident/executive/employeeのみ（part_timeは閲覧のみ）。 */
+export async function addClientCredentialAction(formData: FormData) {
+  await requireBillingAccess();
+  const clientId = String(formData.get("clientId"));
+  const fields = readCredentialFormFields(formData);
+
+  if (fields.error) {
+    redirect(editUrl(clientId, { error: fields.error, section: "credentials" }));
   }
 
+  const supabase = await createSupabaseServerClient();
   const { error } = await supabase.from("client_credentials").insert({
     client_id: clientId,
-    service_name: serviceName,
-    login_id: emptyToNull(formData.get("loginId")),
-    password_vault_url: emptyToNull(formData.get("passwordVaultUrl")),
-    notes: emptyToNull(formData.get("notes")),
+    service_name: fields.serviceName,
+    login_id: fields.loginId,
+    password_vault_url: fields.passwordVaultUrl,
+    notes: fields.notes,
     last_updated_at: new Date().toISOString(),
   });
 
@@ -691,7 +733,38 @@ export async function addClientCredentialAction(formData: FormData) {
   );
 }
 
+export async function updateClientCredentialAction(formData: FormData) {
+  await requireBillingAccess();
+  const clientId = String(formData.get("clientId"));
+  const credentialId = String(formData.get("credentialId"));
+  const fields = readCredentialFormFields(formData);
+
+  if (fields.error) {
+    redirect(editUrl(clientId, { error: fields.error, section: "credentials" }));
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("client_credentials")
+    .update({
+      service_name: fields.serviceName,
+      login_id: fields.loginId,
+      password_vault_url: fields.passwordVaultUrl,
+      notes: fields.notes,
+      last_updated_at: new Date().toISOString(),
+    })
+    .eq("id", credentialId);
+
+  redirect(
+    editUrl(
+      clientId,
+      error ? { error: error.message, section: "credentials" } : { saved: "credentials" },
+    ),
+  );
+}
+
 export async function deleteClientCredentialAction(formData: FormData) {
+  await requireBillingAccess();
   const clientId = String(formData.get("clientId"));
   const credentialId = String(formData.get("credentialId"));
   const supabase = await createSupabaseServerClient();

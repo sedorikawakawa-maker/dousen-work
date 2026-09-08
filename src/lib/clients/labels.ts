@@ -111,6 +111,23 @@ export const SERVICE_OPTIONS = [
 ] as const;
 
 /**
+ * SNSログイン情報(client_credentials)のservice_name選択肢。DB側は既存どおりtextのまま
+ * 自由入力を許容するが、表記ゆれを防ぐため入力はこの一覧からの選択を基本とする。
+ */
+export const CREDENTIAL_SERVICE_OPTIONS = [
+  "Instagram",
+  "TikTok",
+  "YouTube",
+  "X（Twitter）",
+  "Facebook",
+  "LINE公式アカウント",
+  "Googleビジネスプロフィール",
+  "Threads",
+  "公式サイト管理画面",
+  "その他",
+] as const;
+
+/**
  * 連絡手段/流入経路/業種は既存どおりclients.*がtext（自由入力）のままのため、
  * 選択肢はUI側の候補一覧としてのみ定義する。過去の自由入力値が候補外でも、
  * 各編集フォーム側でその値を選択肢へ追加表示するフォールバックを行うため消えない。

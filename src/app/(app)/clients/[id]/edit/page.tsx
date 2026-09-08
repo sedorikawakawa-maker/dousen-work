@@ -14,6 +14,7 @@ import {
   ASSIGNMENT_TYPE_LABELS,
   CONTACT_METHOD_OPTIONS,
   CONTRACT_STATUS_OPTIONS,
+  CREDENTIAL_SERVICE_OPTIONS,
   INDUSTRY_OPTIONS,
   INFLOW_CHANNEL_OPTIONS,
   LINK_TYPE_OPTIONS,
@@ -32,6 +33,7 @@ import {
   saveScheduleRuleAction,
   updateAssignmentAction,
   updateBasicInfoAction,
+  updateClientCredentialAction,
   updateContractAction,
   updateLoginStaffAction,
   updateOperationProfileAction,
@@ -51,7 +53,7 @@ const SECTION_TITLES: Record<string, string> = {
   profile: "制作方針",
   schedule: "投稿スケジュール",
   links: "SNS・各種リンク",
-  credentials: "ログインID・パスワード保管先",
+  credentials: "顧客のSNS等ログイン情報",
   reminder: "通知・催促設定",
 };
 
@@ -452,58 +454,111 @@ export default async function ClientEditPage({
         </div>
       </Section>
 
-      {/* ログインID・パスワード保管先 */}
-      <Section title="ログインID・パスワード保管先">
-        <div className="flex flex-col gap-4">
-          <p className="rounded-2xl bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
-            SNSパスワードそのものはここに入力しないでください。1Password等の外部保管先URLのみ登録します。
-          </p>
-          {detail.credentials.length > 0 ? (
-            <ul className="flex flex-col gap-2">
-              {detail.credentials.map((credential) => (
-                <li
-                  key={credential.id}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 px-3.5 py-3 text-sm"
-                >
-                  <span className="truncate">
-                    <strong>{credential.service_name}</strong>
-                    {credential.login_id ? ` / ID: ${credential.login_id}` : ""}
-                    {credential.password_vault_url ? ` / 保管先あり` : ""}
-                  </span>
-                  <form action={deleteClientCredentialAction}>
-                    <input type="hidden" name="clientId" value={id} />
-                    <input type="hidden" name="credentialId" value={credential.id} />
-                    <button type="submit" className="shrink-0 text-xs text-red-600 underline">
-                      削除
-                    </button>
-                  </form>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-neutral-400">登録済みのログイン情報はありません。</p>
-          )}
+      {/* ログインID・パスワード保管先（顧客のSNS等アカウント情報。閲覧はpart_timeも担当顧客のみ可、
+          追加・編集・削除はpresident/executive/employeeのみ） */}
+      {financeVisible ? (
+        <Section title="顧客のSNS等ログイン情報">
+          <div className="flex flex-col gap-4">
+            <p className="rounded-2xl bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+              SNSパスワードそのものはここに入力しないでください。1Password等の外部保管先URLのみ登録します（このDBにパスワード本体を保存する項目はありません）。
+            </p>
+            {detail.credentials.length > 0 ? (
+              <ul className="flex flex-col gap-2">
+                {detail.credentials.map((credential) => (
+                  <li key={credential.id} className="rounded-2xl border border-neutral-200 px-3.5 py-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate">
+                        <strong>{credential.service_name}</strong>
+                        {` / ID: ${credential.login_id}`}
+                        {credential.password_vault_url ? " / 保管先あり" : ""}
+                      </span>
+                      <details className="shrink-0">
+                        <summary className="cursor-pointer text-xs text-neutral-600 underline marker:content-none">
+                          編集
+                        </summary>
+                        <form
+                          action={updateClientCredentialAction}
+                          className="mt-2 flex flex-col gap-2 rounded-xl border border-neutral-200 p-3"
+                        >
+                          <input type="hidden" name="clientId" value={id} />
+                          <input type="hidden" name="credentialId" value={credential.id} />
+                          <SelectFieldWithFallback
+                            label="サービス"
+                            name="serviceName"
+                            options={CREDENTIAL_SERVICE_OPTIONS}
+                            value={credential.service_name}
+                          />
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <Field label="ログインID" name="loginId" defaultValue={credential.login_id ?? ""} required />
+                            <Field
+                              label="パスワード保管先URL"
+                              name="passwordVaultUrl"
+                              type="url"
+                              defaultValue={credential.password_vault_url ?? ""}
+                            />
+                          </div>
+                          <Field label="補足" name="notes" defaultValue={credential.notes ?? ""} />
+                          <button
+                            type="submit"
+                            className="mt-1 w-full rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700"
+                          >
+                            この内容で保存
+                          </button>
+                        </form>
+                      </details>
+                    </div>
 
-          <form
-            action={addClientCredentialAction}
-            className="flex flex-col gap-3 border-t border-neutral-100 pt-4"
-          >
-            <input type="hidden" name="clientId" value={id} />
-            <Field label="サービス名" name="serviceName" required />
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="ログインID" name="loginId" />
-              <Field label="パスワード保管先URL" name="passwordVaultUrl" />
-            </div>
-            <Field label="補足" name="notes" />
-            <button
-              type="submit"
-              className="mt-1 w-full rounded-full border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-700"
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs text-red-600 underline marker:content-none">
+                        削除
+                      </summary>
+                      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                        <p>
+                          「{credential.service_name}」のログイン情報を削除しますか？この操作は取り消せません。
+                        </p>
+                        <form action={deleteClientCredentialAction} className="mt-2">
+                          <input type="hidden" name="clientId" value={id} />
+                          <input type="hidden" name="credentialId" value={credential.id} />
+                          <button type="submit" className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white">
+                            削除する（確定）
+                          </button>
+                        </form>
+                      </div>
+                    </details>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-neutral-400">登録済みのログイン情報はありません。</p>
+            )}
+
+            <form
+              action={addClientCredentialAction}
+              className="flex flex-col gap-3 border-t border-neutral-100 pt-4"
             >
-              追加
-            </button>
-          </form>
-        </div>
-      </Section>
+              <input type="hidden" name="clientId" value={id} />
+              <SelectFieldWithFallback label="サービス" name="serviceName" options={CREDENTIAL_SERVICE_OPTIONS} value={null} />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="ログインID" name="loginId" required />
+                <Field label="パスワード保管先URL" name="passwordVaultUrl" type="url" />
+              </div>
+              <Field label="補足" name="notes" />
+              <button
+                type="submit"
+                className="mt-1 w-full rounded-full border border-neutral-300 px-4 py-2.5 text-sm font-medium text-neutral-700"
+              >
+                追加
+              </button>
+            </form>
+          </div>
+        </Section>
+      ) : (
+        <Section title="顧客のSNS等ログイン情報">
+          <p className="text-sm text-neutral-500">
+            SNSログイン情報の追加・編集・削除はpresident/executive/employee権限が必要です。担当顧客のログイン情報は顧客詳細ページの「ログイン情報」タブから閲覧できます。
+          </p>
+        </Section>
+      )}
 
       {/* 通知・催促設定 */}
       <Section title="通知・催促設定">
