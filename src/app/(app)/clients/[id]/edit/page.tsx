@@ -460,7 +460,7 @@ export default async function ClientEditPage({
         <Section title="顧客のSNS等ログイン情報">
           <div className="flex flex-col gap-4">
             <p className="rounded-2xl bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
-              SNSパスワードそのものはここに入力しないでください。1Password等の外部保管先URLのみ登録します（このDBにパスワード本体を保存する項目はありません）。
+              パスワードは暗号化して保存されます。外部保管先のみで管理する場合はパスワードを入力しなくても構いません（パスワード・パスワード保管先URLのいずれか1つ以上が必要です）。
             </p>
             {detail.credentials.length > 0 ? (
               <ul className="flex flex-col gap-2">
@@ -470,6 +470,7 @@ export default async function ClientEditPage({
                       <span className="truncate">
                         <strong>{credential.service_name}</strong>
                         {` / ID: ${credential.login_id}`}
+                        {credential.has_password ? " / パスワード登録済み" : ""}
                         {credential.password_vault_url ? " / 保管先あり" : ""}
                       </span>
                       <details className="shrink-0">
@@ -488,15 +489,31 @@ export default async function ClientEditPage({
                             options={CREDENTIAL_SERVICE_OPTIONS}
                             value={credential.service_name}
                           />
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <Field label="ログインID" name="loginId" defaultValue={credential.login_id ?? ""} required />
-                            <Field
-                              label="パスワード保管先URL"
-                              name="passwordVaultUrl"
-                              type="url"
-                              defaultValue={credential.password_vault_url ?? ""}
-                            />
+                          <Field label="ログインID" name="loginId" defaultValue={credential.login_id ?? ""} required />
+
+                          <div>
+                            <p className="text-sm font-medium text-neutral-700">
+                              パスワード: {credential.has_password ? "••••••••" : "未設定"}
+                            </p>
+                            <details className="mt-1">
+                              <summary className="cursor-pointer text-xs text-neutral-600 underline marker:content-none">
+                                {credential.has_password ? "変更する" : "設定する"}
+                              </summary>
+                              <div className="mt-1.5">
+                                <Field label="新しいパスワード" name="password" type="password" />
+                                <p className="mt-1 text-xs text-neutral-400">
+                                  空欄のまま保存すると、既存のパスワードはそのまま維持されます。
+                                </p>
+                              </div>
+                            </details>
                           </div>
+
+                          <Field
+                            label="パスワード保管先URL"
+                            name="passwordVaultUrl"
+                            type="url"
+                            defaultValue={credential.password_vault_url ?? ""}
+                          />
                           <Field label="補足" name="notes" defaultValue={credential.notes ?? ""} />
                           <button
                             type="submit"
@@ -538,8 +555,9 @@ export default async function ClientEditPage({
             >
               <input type="hidden" name="clientId" value={id} />
               <SelectFieldWithFallback label="サービス" name="serviceName" options={CREDENTIAL_SERVICE_OPTIONS} value={null} />
+              <Field label="ログインID" name="loginId" required />
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="ログインID" name="loginId" required />
+                <Field label="パスワード" name="password" type="password" />
                 <Field label="パスワード保管先URL" name="passwordVaultUrl" type="url" />
               </div>
               <Field label="補足" name="notes" />

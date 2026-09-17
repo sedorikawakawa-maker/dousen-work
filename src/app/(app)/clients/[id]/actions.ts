@@ -21,6 +21,10 @@ import {
 import type { WeekdayRule } from "@/lib/scheduling/weekdayRule";
 import { generateMaterialFormToken, hashMaterialFormToken } from "@/lib/materials/formToken";
 import { uploadFilesForMaterialSubmission } from "@/lib/materials/submissionUpload";
+import {
+  encryptClientCredentialPassword,
+  decryptClientCredentialPassword,
+} from "@/lib/clientCredentials/passwordCrypto";
 import type {
   AssignmentType,
   BillingMethod,
@@ -675,35 +679,48 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
-function readCredentialFormFields(formData: FormData): {
+/** password欄は意図的な前後空白も保持したいため、emptyToNull()とは別に用意する（trimは判定のみに使う）。 */
+function emptyToNullPreserveWhitespace(value: FormDataEntryValue | null): string | null {
+  const raw = String(value ?? "");
+  return raw.trim() === "" ? null : raw;
+}
+
+interface CredentialFormFields {
   serviceName: string;
   loginId: string;
+  password: string | null;
   passwordVaultUrl: string | null;
   notes: string | null;
   error: string | null;
-} {
+}
+
+function readCredentialFormFields(formData: FormData): CredentialFormFields {
   const serviceName = String(formData.get("serviceName") ?? "").trim();
   const loginId = String(formData.get("loginId") ?? "").trim();
-  const passwordVaultUrlRaw = emptyToNull(formData.get("passwordVaultUrl"));
+  const password = emptyToNullPreserveWhitespace(formData.get("password"));
+  const passwordVaultUrl = emptyToNull(formData.get("passwordVaultUrl"));
   const notes = emptyToNull(formData.get("notes"));
 
   if (!serviceName) {
-    return { serviceName, loginId, passwordVaultUrl: passwordVaultUrlRaw, notes, error: "サービスを選択してください" };
+    return { serviceName, loginId, password, passwordVaultUrl, notes, error: "サービスを選択してください" };
   }
   if (!loginId) {
-    return { serviceName, loginId, passwordVaultUrl: passwordVaultUrlRaw, notes, error: "ログインIDを入力してください" };
+    return { serviceName, loginId, password, passwordVaultUrl, notes, error: "ログインIDを入力してください" };
   }
-  if (passwordVaultUrlRaw && !isValidHttpUrl(passwordVaultUrlRaw)) {
+  if (passwordVaultUrl && !isValidHttpUrl(passwordVaultUrl)) {
     return {
       serviceName,
       loginId,
-      passwordVaultUrl: passwordVaultUrlRaw,
+      password,
+      passwordVaultUrl,
       notes,
       error: "パスワード保管先URLの形式が正しくありません（https://... の形式で入力してください）",
     };
   }
-  return { serviceName, loginId, passwordVaultUrl: passwordVaultUrlRaw, notes, error: null };
+  return { serviceName, loginId, password, passwordVaultUrl, notes, error: null };
 }
+
+const CREDENTIAL_PASSWORD_ENCRYPTION_VERSION = 1;
 
 /** SNSログイン情報の追加・編集・削除はpresident/executive/employeeのみ（part_timeは閲覧のみ）。 */
 export async function addClientCredentialAction(formData: FormData) {
@@ -714,6 +731,18 @@ export async function addClientCredentialAction(formData: FormData) {
   if (fields.error) {
     redirect(editUrl(clientId, { error: fields.error, section: "credentials" }));
   }
+  if (!fields.password && !fields.passwordVaultUrl) {
+    redirect(
+      editUrl(clientId, {
+        error: "パスワードまたはパスワード保管先URLのいずれかを入力してください",
+        section: "credentials",
+      }),
+    );
+  }
+
+  // パスワードはここでのみ暗号化する。平文はこの関数のスコープ外へ渡さない
+  // （DB/activity_logs/console等どこにも平文のまま出力しない）。
+  const encryptedPassword = fields.password ? encryptClientCredentialPassword(fields.password) : null;
 
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.from("client_credentials").insert({
@@ -721,6 +750,8 @@ export async function addClientCredentialAction(formData: FormData) {
     service_name: fields.serviceName,
     login_id: fields.loginId,
     password_vault_url: fields.passwordVaultUrl,
+    encrypted_password: encryptedPassword,
+    password_encryption_version: encryptedPassword ? CREDENTIAL_PASSWORD_ENCRYPTION_VERSION : null,
     notes: fields.notes,
     last_updated_at: new Date().toISOString(),
   });
@@ -744,16 +775,48 @@ export async function updateClientCredentialAction(formData: FormData) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase
-    .from("client_credentials")
-    .update({
-      service_name: fields.serviceName,
-      login_id: fields.loginId,
-      password_vault_url: fields.passwordVaultUrl,
-      notes: fields.notes,
-      last_updated_at: new Date().toISOString(),
-    })
-    .eq("id", credentialId);
+
+  const updatePayload: {
+    service_name: string;
+    login_id: string;
+    password_vault_url: string | null;
+    notes: string | null;
+    last_updated_at: string;
+    encrypted_password?: string;
+    password_encryption_version?: number;
+  } = {
+    service_name: fields.serviceName,
+    login_id: fields.loginId,
+    password_vault_url: fields.passwordVaultUrl,
+    notes: fields.notes,
+    last_updated_at: new Date().toISOString(),
+  };
+
+  if (fields.password) {
+    // 新しいpasswordが入力された時だけ再暗号化して上書きする。既存のencrypted_passwordを
+    // 復号してinputへ初期表示することは一切しない（「変更する」を選んだ場合も入力欄は空から始まる）。
+    updatePayload.encrypted_password = encryptClientCredentialPassword(fields.password);
+    updatePayload.password_encryption_version = CREDENTIAL_PASSWORD_ENCRYPTION_VERSION;
+  } else if (!fields.passwordVaultUrl) {
+    // passwordもvault URLも入力されていない場合、DB CHECK制約(secret_present)を満たすには
+    // 既存のencrypted_passwordが残っている必要がある。事前に確認し、なければ保存前に弾く。
+    const { data: existing } = await supabase
+      .from("client_credentials")
+      .select("encrypted_password")
+      .eq("id", credentialId)
+      .maybeSingle();
+    if (!existing?.encrypted_password) {
+      redirect(
+        editUrl(clientId, {
+          error: "パスワードまたはパスワード保管先URLのいずれかを入力してください",
+          section: "credentials",
+        }),
+      );
+    }
+    // password列はpayloadに含めない -> 既存のencrypted_passwordはそのまま維持される。
+  }
+
+  const { error } = await supabase.from("client_credentials").update(updatePayload).eq("id", credentialId);
 
   redirect(
     editUrl(
@@ -772,6 +835,76 @@ export async function deleteClientCredentialAction(formData: FormData) {
   await supabase.from("client_credentials").delete().eq("id", credentialId);
 
   redirect(editUrl(clientId, { saved: "credentials" }));
+}
+
+export interface RevealCredentialSecretResult {
+  password: string | null;
+  error: string | null;
+}
+
+const CREDENTIAL_ACCESS_DENIED_MESSAGE = "パスワードを取得できませんでした。";
+
+/**
+ * SNSログイン情報のパスワードを復号して返す（表示・コピー共通）。credentialIdとpurposeのみ
+ * 受け取り、client_id・actor_staff_idはクライアントから信用せずサーバー側で解決する。
+ *
+ * 1) 現在ユーザーの認証済みセッションでcredential行をSELECT（既存RLSで担当外part_timeは0件）
+ * 2) アプリ層でも admin系role または (part_time + 現在有効なassignmentあり) を明示確認（二重防御）
+ * 3) log_credential_password_access RPCで監査ログを記録（失敗したらpasswordを返さない）
+ * 4) 復号して返す
+ *
+ * 権限拒否・not found・復号失敗はすべて同じ汎用メッセージを返し、理由を外部へ漏らさない。
+ */
+export async function revealClientCredentialSecretAction(
+  credentialId: string,
+  purpose: "view" | "copy",
+): Promise<RevealCredentialSecretResult> {
+  const staff = await getCurrentStaff();
+  if (!staff) {
+    return { password: null, error: CREDENTIAL_ACCESS_DENIED_MESSAGE };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data: credential, error: fetchError } = await supabase
+    .from("client_credentials")
+    .select("id, client_id, encrypted_password")
+    .eq("id", credentialId)
+    .maybeSingle();
+
+  if (fetchError || !credential || !credential.encrypted_password) {
+    return { password: null, error: CREDENTIAL_ACCESS_DENIED_MESSAGE };
+  }
+
+  let allowed = canViewFinance(staff.role);
+  if (!allowed && staff.role === "part_time") {
+    const { data: assignment } = await supabase
+      .from("client_assignments")
+      .select("id")
+      .eq("client_id", credential.client_id)
+      .eq("staff_id", staff.id)
+      .is("active_to", null)
+      .maybeSingle();
+    allowed = !!assignment;
+  }
+  if (!allowed) {
+    return { password: null, error: CREDENTIAL_ACCESS_DENIED_MESSAGE };
+  }
+
+  // 監査ログを残せない場合はpasswordを返さない（「復号成功だが記録できない」状態を避ける）。
+  const { error: logError } = await supabase.rpc("log_credential_password_access", {
+    p_credential_id: credentialId,
+    p_access_type: purpose,
+  });
+  if (logError) {
+    return { password: null, error: CREDENTIAL_ACCESS_DENIED_MESSAGE };
+  }
+
+  try {
+    const password = decryptClientCredentialPassword(credential.encrypted_password);
+    return { password, error: null };
+  } catch {
+    return { password: null, error: CREDENTIAL_ACCESS_DENIED_MESSAGE };
+  }
 }
 
 function parseWeekdayRuleFromForm(formData: FormData): WeekdayRule | null {

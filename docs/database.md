@@ -147,7 +147,9 @@ instagram, tiktok, youtube, website, drive_root, canva_feed, canva_story, canva_
 
 ## client_credentials
 
-平文パスワード保存禁止。
+平文パスワード保存禁止。パスワードを保存する場合はAES-256-GCMで暗号化し
+`encrypted_password`（暗号文のみ）へ格納する（鍵は`CLIENT_CREDENTIALS_ENCRYPTION_KEY`、
+DBには保存しない）。`encrypted_password`と`password_vault_url`のどちらか一方は必須。
 
 | column | type |
 |---|---|
@@ -156,6 +158,8 @@ instagram, tiktok, youtube, website, drive_root, canva_feed, canva_story, canva_
 | service_name | text |
 | login_id | text nullable |
 | password_vault_url | text nullable |
+| encrypted_password | bytea nullable |
+| password_encryption_version | smallint nullable |
 | last_updated_at | timestamptz nullable |
 | notes | text nullable |
 | created_at | timestamptz |

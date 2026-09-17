@@ -265,6 +265,8 @@ export interface Database {
           service_name: string;
           login_id: string | null;
           password_vault_url: string | null;
+          encrypted_password: string | null;
+          password_encryption_version: number | null;
           last_updated_at: string | null;
           notes: string | null;
           created_at: string;
@@ -1047,6 +1049,13 @@ export interface Database {
         Args: {
           p_invoice_item_id: string;
           p_reason: string;
+        };
+        Returns: undefined;
+      };
+      log_credential_password_access: {
+        Args: {
+          p_credential_id: string;
+          p_access_type: string;
         };
         Returns: undefined;
       };

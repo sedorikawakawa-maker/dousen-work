@@ -22,15 +22,36 @@ Supabase Auth。
 禁止:
 - SNSパスワードの平文保存
 - ブラウザlocalStorageへの保存
-- ログへの出力
+- ログ・activity_logsへの平文出力
 
 保存可能:
 - login_id
-- password_vault_url
+- password_vault_url（1Password等の外部安全保管先）
+- encrypted_password（AES-256-GCMで暗号化した暗号文のみ。生パスワードは保存しない）
+- password_encryption_version
 - last_updated_at
 
+パスワードの暗号化保存:
+- アルゴリズムはAES-256-GCM（認証付き暗号）。Google Drive refresh token暗号化
+  (`DRIVE_TOKEN_ENCRYPTION_KEY`)と同じ方式だが、鍵は`CLIENT_CREDENTIALS_ENCRYPTION_KEY`
+  として完全に分離する（片方の鍵が漏洩しても他方の秘密に影響しないため）。
+- 復号はサーバー側（Server Action）でのみ行い、鍵はサーバー環境変数にのみ保持する。
+  クライアントJavaScriptへ鍵を渡すこと、`NEXT_PUBLIC_`環境変数へ鍵を入れることは禁止。
+- 通常の顧客詳細ページの取得では暗号文（encrypted_password）自体を取得しない。
+  画面が必要とするのは「パスワードが登録済みかどうか」の真偽値のみで、実際の復号は
+  スタッフが「表示する」「コピー」を押した瞬間にのみ行う。
+- part_timeは自分が現在担当している顧客（`client_assignments`が有効なもの）のcredentialのみ
+  閲覧・パスワード表示・コピーが可能。担当外の顧客はSELECT自体ができず、追加・編集・削除は
+  president/executive/employeeのみ（part_timeは不可）。RLSとアプリ層（Server Action）の
+  両方で同じ権限を確認する（片方だけに依存しない）。
+- パスワードの表示・コピーはactivity_logsへ記録する（`credential_password_viewed` /
+  `credential_password_copied`）。記録するのは actor_staff_id・client_id・credential_id・
+  service_name・timestampのみで、パスワード本体・暗号文・login_idは一切記録しない。
+- 画面に表示した平文パスワードは30秒後に自動的に非表示へ戻り、ページ再読み込みでも
+  必ず非表示に戻る（フロントエンドのstateにのみ一時保持し、永続化しない）。
+
 推奨:
-1Password 等の外部安全保管先。
+1Password 等の外部安全保管先との併用可（パスワード・保管先URLのどちらか一方、または両方を登録できる）。
 
 ## Google Drive
 

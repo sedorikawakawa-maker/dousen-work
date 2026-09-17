@@ -43,6 +43,7 @@ import { resolveProductionVideoFolder } from "@/lib/productionVideos/upload";
 import { DriveMockNotice } from "@/components/DriveMockNotice";
 import { ProductionVideoUploadForm } from "@/components/ProductionVideoUploadForm";
 import { CopyButton } from "@/components/CopyButton";
+import { CredentialSecretReveal } from "@/components/CredentialSecretReveal";
 import { StatusBadge } from "@/components/StatusBadge";
 import { UrgencyBadge } from "@/components/UrgencyBadge";
 import { PageContainer } from "@/components/PageContainer";
@@ -1542,29 +1543,33 @@ export default async function ClientDetailPage({
             <div>
               <h3 className="mb-2 text-sm font-semibold text-neutral-700">顧客のSNS等ログイン情報</h3>
               <p className="mb-2 text-xs text-neutral-500">
-                パスワード本体はこのシステムには保存されません（保管先URLへのリンクのみ）。追加・編集・削除は顧客編集ページから行えます。
+                パスワードは暗号化して保存されます（このページから表示・コピーが可能です）。外部保管先URLのみで管理している場合はそちらのリンクを表示します。追加・編集・削除は顧客編集ページから行えます。
               </p>
-              <ul className="flex flex-col gap-2 text-sm">
-                {detail.credentials.map((c) => (
-                  <li key={c.id}>
-                    <strong>{c.service_name}</strong>
-                    {c.login_id ? ` / ID: ${c.login_id}` : ""}
-                    {c.password_vault_url ? (
-                      <>
-                        {" / 保管先: "}
-                        <a href={c.password_vault_url} target="_blank" rel="noreferrer" className="underline">
-                          リンク
-                        </a>
-                      </>
-                    ) : (
-                      " / 保管先: —"
-                    )}
-                  </li>
-                ))}
-                {detail.credentials.length === 0 ? (
-                  <li className="text-neutral-400">登録済みのログイン情報はありません。</li>
-                ) : null}
-              </ul>
+              {detail.credentials.length > 0 ? (
+                <ul className="flex flex-col gap-3">
+                  {detail.credentials.map((c) => (
+                    <li key={c.id} className="rounded-xl border border-neutral-200 px-3.5 py-3 text-sm">
+                      <p className="font-semibold text-neutral-900">{c.service_name}</p>
+                      <p className="mt-0.5 text-neutral-700">ログインID: {c.login_id ?? "—"}</p>
+                      {c.has_password ? (
+                        <div className="mt-1">
+                          <CredentialSecretReveal credentialId={c.id} />
+                        </div>
+                      ) : null}
+                      {c.password_vault_url ? (
+                        <p className="mt-1 text-neutral-700">
+                          外部保管先:{" "}
+                          <a href={c.password_vault_url} target="_blank" rel="noreferrer" className="underline">
+                            保管先を開く
+                          </a>
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-neutral-400">登録済みのログイン情報はありません。</p>
+              )}
             </div>
 
             <div className="border-t border-neutral-100 pt-4">

@@ -233,12 +233,27 @@ export async function listActiveStaff(supabase: TypedClient) {
   return data ?? [];
 }
 
+export interface ClientCredentialRow {
+  id: string;
+  client_id: string;
+  service_name: string;
+  login_id: string | null;
+  password_vault_url: string | null;
+  /** encrypted_password自体はここでは取得しない（reveal専用Actionでのみ取得・復号する）。 */
+  has_password: boolean;
+  notes: string | null;
+  last_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export async function getClientDetail(supabase: TypedClient, clientId: string) {
   const [
     clientResult,
     profileResult,
     linksResult,
     credentialsResult,
+    credentialsWithPasswordResult,
     scheduleRulesResult,
     assignmentsResult,
     activityLogsResult,
@@ -254,11 +269,17 @@ export async function getClientDetail(supabase: TypedClient, clientId: string) {
       .select("*")
       .eq("client_id", clientId)
       .order("link_type"),
+    // encrypted_password列は選択しない。通常のページ表示ではhas_passwordの真偽だけが必要。
     supabase
       .from("client_credentials")
-      .select("*")
+      .select("id, client_id, service_name, login_id, password_vault_url, notes, last_updated_at, created_at, updated_at")
       .eq("client_id", clientId)
       .order("service_name"),
+    supabase
+      .from("client_credentials")
+      .select("id")
+      .eq("client_id", clientId)
+      .not("encrypted_password", "is", null),
     supabase
       .from("posting_schedule_rules")
       .select("*")
@@ -282,15 +303,22 @@ export async function getClientDetail(supabase: TypedClient, clientId: string) {
   if (profileResult.error) throw profileResult.error;
   if (linksResult.error) throw linksResult.error;
   if (credentialsResult.error) throw credentialsResult.error;
+  if (credentialsWithPasswordResult.error) throw credentialsWithPasswordResult.error;
   if (scheduleRulesResult.error) throw scheduleRulesResult.error;
   if (assignmentsResult.error) throw assignmentsResult.error;
   if (activityLogsResult.error) throw activityLogsResult.error;
+
+  const hasPasswordIds = new Set((credentialsWithPasswordResult.data ?? []).map((c) => c.id));
+  const credentials: ClientCredentialRow[] = (credentialsResult.data ?? []).map((c) => ({
+    ...c,
+    has_password: hasPasswordIds.has(c.id),
+  }));
 
   return {
     client: clientResult.data,
     profile: profileResult.data,
     links: linksResult.data ?? [],
-    credentials: credentialsResult.data ?? [],
+    credentials,
     scheduleRules: scheduleRulesResult.data ?? [],
     assignments: assignmentsResult.data ?? [],
     activityLogs: activityLogsResult.data ?? [],
