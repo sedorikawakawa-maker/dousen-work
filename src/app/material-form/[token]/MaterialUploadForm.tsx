@@ -6,6 +6,7 @@ import {
   createMaterialUploadSessionsAction,
 } from "./actions";
 import { POST_TYPE_OPTIONS, REQUESTED_POST_TIMING_OPTIONS } from "@/lib/clients/labels";
+import { FileSelectButton } from "@/components/FileSelectButton";
 
 type FileUploadState =
   | { status: "queued" }
@@ -307,18 +308,25 @@ export function MaterialUploadForm({ token }: { token: string }) {
           />
         </label>
 
-        <label className="text-sm font-medium text-neutral-700">
-          ファイル（複数選択できます。任意。大きな動画等は別途Google Driveでの共有も可能です）
-          <input
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-neutral-700">
+            ファイル（複数選択できます。任意。大きな動画等は別途Google Driveでの共有も可能です）
+          </span>
+          <FileSelectButton
             ref={fileInputRef}
-            type="file"
             accept="image/*,video/*"
             multiple
             disabled={isUploading}
             onChange={(e) => handleFilesSelected(e.target.files)}
-            className="mt-1 w-full text-sm disabled:opacity-50"
           />
-        </label>
+          <p className="text-sm text-neutral-500">
+            {entries.length === 0
+              ? "ファイルが選択されていません"
+              : entries.length === 1
+                ? `選択中: ${entries[0].file.name}`
+                : `選択中: ${entries[0].file.name} 他${entries.length - 1}件`}
+          </p>
+        </div>
 
         {entries.length > 0 ? (
           <ul className="flex flex-col gap-2">

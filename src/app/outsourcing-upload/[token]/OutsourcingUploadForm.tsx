@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { confirmOutsourcingDeliveryAction, createOutsourcingUploadSessionAction } from "./actions";
+import { FileSelectButton } from "@/components/FileSelectButton";
 
 /**
  * 外注先向け納品フォーム。ファイル本体はブラウザからGoogle Driveへ直接PUTし、
@@ -18,6 +19,7 @@ export function OutsourcingUploadForm({ token }: { token: string }) {
   const [phase, setPhase] = useState<"idle" | "uploading" | "submitted">("idle");
   const [progress, setProgress] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [fileFieldError, setFileFieldError] = useState(false);
 
   function uploadFileToSession(targetFile: File, sessionUrl: string): Promise<{ id: string; webViewLink: string }> {
     return new Promise((resolve, reject) => {
@@ -53,8 +55,10 @@ export function OutsourcingUploadForm({ token }: { token: string }) {
     const trimmedManualUrl = manualDriveUrl.trim();
     if (!file && !trimmedManualUrl) {
       setFormError("ファイルを選択するか、保存先URLを入力してください");
+      setFileFieldError(true);
       return;
     }
+    setFileFieldError(false);
 
     setPhase("uploading");
     setProgress(file ? 0 : null);
@@ -124,16 +128,24 @@ export function OutsourcingUploadForm({ token }: { token: string }) {
       ) : null}
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <label className="text-sm font-medium text-neutral-700">
-          完成動画/ファイル
-          <input
-            type="file"
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-neutral-700">完成動画/ファイル</span>
+          <FileSelectButton
             accept="video/*,image/*"
             disabled={isUploading}
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="mt-1.5 w-full text-sm disabled:opacity-50"
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              setFileFieldError(false);
+            }}
           />
-        </label>
+          <p className={`text-sm ${fileFieldError ? "font-medium text-red-600" : "text-neutral-500"}`}>
+            {file
+              ? `選択中: ${file.name}`
+              : fileFieldError
+                ? "ファイルを選択してください（または下の保存先URLを入力してください）"
+                : "ファイルが選択されていません"}
+          </p>
+        </div>
 
         {file ? (
           <div className="rounded-xl border border-neutral-200 px-3 py-2 text-sm">
@@ -165,7 +177,10 @@ export function OutsourcingUploadForm({ token }: { token: string }) {
           <input
             type="url"
             value={manualDriveUrl}
-            onChange={(e) => setManualDriveUrl(e.target.value)}
+            onChange={(e) => {
+              setManualDriveUrl(e.target.value);
+              if (e.target.value.trim()) setFileFieldError(false);
+            }}
             disabled={isUploading}
             className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base disabled:bg-neutral-50"
           />
