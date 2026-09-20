@@ -31,6 +31,69 @@ export async function listRecurringBillingRulesForClient(supabase: TypedClient, 
   return data ?? [];
 }
 
+export interface OneTimeBillingRuleRow {
+  id: string;
+  subject: string;
+  description: string | null;
+  quantity: number;
+  unit_price_ex_tax: number;
+  notes: string | null;
+  one_time_billing_month: string;
+  one_time_revenue_month: string;
+  cancelled_at: string | null;
+  cancelled_by_staff_id: string | null;
+  cancel_reason: string | null;
+  invoiceStatus: Database["public"]["Tables"]["invoices"]["Row"]["status"] | null;
+}
+
+/**
+ * スポット請求（billing_type='one_time'）の一覧。対応するinvoice_item（未取消のもの）の
+ * invoice状態も併せて取得し、取消可否のUI判定（invoice.status==='planned'の場合のみ取消可）に使う。
+ * 取消済みルール、または対応するinvoice_itemが生成されていないルールはinvoiceStatus=nullになる。
+ */
+export async function listOneTimeBillingRulesForClient(
+  supabase: TypedClient,
+  clientId: string,
+): Promise<OneTimeBillingRuleRow[]> {
+  const { data: rules, error } = await supabase
+    .from("billing_rules")
+    .select("*")
+    .eq("client_id", clientId)
+    .eq("billing_type", "one_time")
+    .order("one_time_billing_month", { ascending: false });
+  if (error) throw error;
+  if (!rules || rules.length === 0) return [];
+
+  const ruleIds = rules.map((r) => r.id);
+  const { data: items, error: itemsError } = await supabase
+    .from("invoice_items")
+    .select("billing_rule_id, invoices(status)")
+    .in("billing_rule_id", ruleIds)
+    .is("cancelled_at", null);
+  if (itemsError) throw itemsError;
+
+  const statusByRuleId = new Map(
+    ((items ?? []) as unknown as { billing_rule_id: string | null; invoices: { status: Database["public"]["Tables"]["invoices"]["Row"]["status"] } | null }[])
+      .filter((i): i is { billing_rule_id: string; invoices: { status: Database["public"]["Tables"]["invoices"]["Row"]["status"] } | null } => i.billing_rule_id !== null)
+      .map((i) => [i.billing_rule_id, i.invoices?.status ?? null]),
+  );
+
+  return rules.map((r) => ({
+    id: r.id,
+    subject: r.subject,
+    description: r.description,
+    quantity: r.quantity,
+    unit_price_ex_tax: r.unit_price_ex_tax,
+    notes: r.notes,
+    one_time_billing_month: r.one_time_billing_month as string,
+    one_time_revenue_month: r.one_time_revenue_month as string,
+    cancelled_at: r.cancelled_at,
+    cancelled_by_staff_id: r.cancelled_by_staff_id,
+    cancel_reason: r.cancel_reason,
+    invoiceStatus: statusByRuleId.get(r.id) ?? null,
+  }));
+}
+
 export interface UpcomingInvoiceItemRow {
   id: string;
   billing_month: string;

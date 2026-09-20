@@ -815,14 +815,20 @@ export interface Database {
           created_by_staff_id: string | null;
           created_at: string;
           updated_at: string;
+          cancelled_at: string | null;
+          cancelled_by_staff_id: string | null;
+          cancel_reason: string | null;
         };
         Insert: Omit<
           Database["public"]["Tables"]["billing_rules"]["Row"],
-          "id" | "created_at" | "updated_at"
+          "id" | "created_at" | "updated_at" | "cancelled_at" | "cancelled_by_staff_id" | "cancel_reason"
         > & {
           id?: string;
           created_at?: string;
           updated_at?: string;
+          cancelled_at?: string | null;
+          cancelled_by_staff_id?: string | null;
+          cancel_reason?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["billing_rules"]["Insert"]>;
         Relationships: [];
@@ -1048,6 +1054,13 @@ export interface Database {
       cancel_invoice_item: {
         Args: {
           p_invoice_item_id: string;
+          p_reason: string;
+        };
+        Returns: undefined;
+      };
+      cancel_one_time_billing_rule: {
+        Args: {
+          p_billing_rule_id: string;
           p_reason: string;
         };
         Returns: undefined;

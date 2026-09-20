@@ -613,6 +613,30 @@ export async function deactivateBillingRuleAction(formData: FormData) {
   redirect(billingUrl(clientId, error ? { error } : { saved: "1" }));
 }
 
+/**
+ * スポット請求（one_time）の取消。対応するinvoiceがplannedの場合のみ成功する
+ * （prepared/sentの場合はRPC側で拒否される）。取消理由は必須。
+ * DELETEは使わず、既存のcancel_invoice_itemと同じ「取消して履歴を残す」方式を用いる。
+ */
+export async function cancelOneTimeBillingRuleAction(formData: FormData) {
+  await requireBillingAccess();
+  const clientId = String(formData.get("clientId") ?? "").trim();
+  const ruleId = String(formData.get("ruleId") ?? "").trim();
+  const reason = String(formData.get("cancelReason") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  if (!reason) {
+    redirect(billingUrl(clientId, { error: "取消理由を入力してください" }));
+  }
+
+  const { error } = await supabase.rpc("cancel_one_time_billing_rule", {
+    p_billing_rule_id: ruleId,
+    p_reason: reason,
+  });
+
+  redirect(billingUrl(clientId, error ? { error: error.message } : { saved: "1" }));
+}
+
 export async function updateOperationProfileAction(formData: FormData) {
   const clientId = String(formData.get("clientId"));
   const supabase = await createSupabaseServerClient();

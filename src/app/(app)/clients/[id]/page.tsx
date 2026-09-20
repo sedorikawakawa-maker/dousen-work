@@ -6,6 +6,7 @@ import { canViewFinance } from "@/lib/auth/roles";
 import { REVENUE_MONTH_OFFSET_OPTIONS } from "@/lib/billing/generate";
 import {
   getClientBillingProfile,
+  listOneTimeBillingRulesForClient,
   listRecurringBillingRulesForClient,
   listUpcomingInvoiceItemsForClient,
 } from "@/lib/billing/queries";
@@ -50,6 +51,7 @@ import { PageContainer } from "@/components/PageContainer";
 import { ClientAvatar } from "@/components/ClientAvatar";
 import {
   addMaterialAction,
+  cancelOneTimeBillingRuleAction,
   changeRecurringBillingRuleFromMonthAction,
   createOneTimeBillingRuleAction,
   createRecurringBillingRuleAction,
@@ -79,6 +81,12 @@ const TABS = [
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
+
+const ONE_TIME_INVOICE_STATUS_LABELS: Record<"planned" | "prepared" | "sent", string> = {
+  planned: "請求予定",
+  prepared: "請求書作成済",
+  sent: "送付済み",
+};
 
 /** タブの並び・キー・URLパラメータは変えず、見た目のグルーピングだけに使う。 */
 const TAB_GROUPS: { label: string; keys: TabKey[] }[] = [
@@ -184,11 +192,13 @@ export default async function ClientDetailPage({
 
   let billingProfile: Awaited<ReturnType<typeof getClientBillingProfile>> = null;
   let recurringBillingRules: Awaited<ReturnType<typeof listRecurringBillingRulesForClient>> = [];
+  let oneTimeBillingRules: Awaited<ReturnType<typeof listOneTimeBillingRulesForClient>> = [];
   let upcomingInvoiceItems: Awaited<ReturnType<typeof listUpcomingInvoiceItemsForClient>> = [];
   if (activeTab === "billing" && canSeeBilling) {
-    [billingProfile, recurringBillingRules, upcomingInvoiceItems] = await Promise.all([
+    [billingProfile, recurringBillingRules, oneTimeBillingRules, upcomingInvoiceItems] = await Promise.all([
       getClientBillingProfile(supabase, id),
       listRecurringBillingRulesForClient(supabase, id),
+      listOneTimeBillingRulesForClient(supabase, id),
       listUpcomingInvoiceItemsForClient(supabase, id),
     ]);
   }
@@ -827,7 +837,7 @@ export default async function ClientDetailPage({
             </div>
 
             <div className="border-t border-neutral-100 pt-6">
-              <h3 className="mb-3 text-sm font-semibold text-neutral-700">スポット請求追加</h3>
+              <h3 className="mb-3 text-sm font-semibold text-neutral-700">スポット請求</h3>
               <details className="text-sm">
                 <summary className="cursor-pointer text-[var(--accent-strong)] underline">＋ スポット請求を追加</summary>
                 <form
@@ -912,6 +922,87 @@ export default async function ClientDetailPage({
                   </button>
                 </form>
               </details>
+
+              <h4 className="mb-2 mt-4 text-xs font-semibold text-neutral-500">スポット請求一覧</h4>
+              <ul className="flex flex-col gap-2 text-sm">
+                {oneTimeBillingRules.map((rule) => {
+                  const amount = rule.quantity * rule.unit_price_ex_tax;
+                  const isCancelled = rule.cancelled_at !== null;
+                  const statusLabel = isCancelled
+                    ? "取消済み"
+                    : ONE_TIME_INVOICE_STATUS_LABELS[rule.invoiceStatus ?? "planned"];
+                  return (
+                    <li key={rule.id} className="rounded-md border border-neutral-200 px-3 py-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className={`font-medium ${isCancelled ? "text-neutral-400 line-through" : ""}`}>
+                            {rule.subject}
+                          </span>
+                          {rule.description ? (
+                            <span className="ml-2 text-xs text-neutral-500">{rule.description}</span>
+                          ) : null}
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${
+                            isCancelled
+                              ? "bg-neutral-100 text-neutral-400"
+                              : rule.invoiceStatus === "sent"
+                                ? "bg-green-100 text-green-700"
+                                : rule.invoiceStatus === "prepared"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-[var(--accent-soft-bg)] text-[var(--accent-soft-text)]"
+                          }`}
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-neutral-500">
+                        数量 {rule.quantity} × 単価 {rule.unit_price_ex_tax.toLocaleString("ja-JP")}円 = 金額{" "}
+                        {amount.toLocaleString("ja-JP")}円（税抜） ・ 請求月 {formatMonthLabel(rule.one_time_billing_month)}{" "}
+                        ・ 売上計上月 {formatMonthLabel(rule.one_time_revenue_month)}
+                        {rule.notes ? ` ・ 備考: ${rule.notes}` : ""}
+                      </p>
+
+                      {isCancelled ? (
+                        <p className="mt-1.5 text-xs text-neutral-400">取消理由: {rule.cancel_reason}</p>
+                      ) : rule.invoiceStatus === "sent" ? (
+                        <p className="mt-1.5 text-xs text-neutral-400">送付済みのため取消できません</p>
+                      ) : rule.invoiceStatus === "prepared" ? (
+                        <p className="mt-1.5 text-xs text-neutral-400">送付準備中のため取消できません</p>
+                      ) : (
+                        <details className="mt-1.5 text-xs">
+                          <summary className="cursor-pointer text-red-600 underline">取消する</summary>
+                          <form
+                            action={cancelOneTimeBillingRuleAction}
+                            className="mt-2 flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3"
+                          >
+                            <input type="hidden" name="clientId" value={id} />
+                            <input type="hidden" name="ruleId" value={rule.id} />
+                            <label className="text-xs font-medium text-neutral-700">
+                              取消理由（必須）
+                              <input
+                                name="cancelReason"
+                                type="text"
+                                required
+                                className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                              />
+                            </label>
+                            <button
+                              type="submit"
+                              className="mt-1 self-start rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
+                            >
+                              取消する（確定）
+                            </button>
+                          </form>
+                        </details>
+                      )}
+                    </li>
+                  );
+                })}
+                {oneTimeBillingRules.length === 0 ? (
+                  <li className="text-neutral-400">スポット請求はまだありません。</li>
+                ) : null}
+              </ul>
             </div>
 
             <div className="border-t border-neutral-100 pt-6">
