@@ -6,6 +6,27 @@ import { addMonthsIso } from "@/lib/billing/generate";
 
 type TypedClient = SupabaseClient<Database>;
 
+/**
+ * invoice_itemsの正式金額（amount_override優先、なければtax_excluded_amount）。
+ * 請求管理・売上管理・CSV/PDF出力のすべてでこの1関数だけを使い、金額計算を分岐させない。
+ */
+export function effectiveInvoiceItemAmount(item: { amount_override: number | null; tax_excluded_amount: number }): number {
+  return item.amount_override ?? item.tax_excluded_amount;
+}
+
+export type BillingItemCategory = "recurring" | "one_time" | "other";
+
+/** billing_rule_idが無い（手動追加・移行データ等）か、billing_typeが未知の場合はotherとする。 */
+export function categorizeInvoiceItem(
+  billingRuleId: string | null,
+  billingType: BillingType | null | undefined,
+): BillingItemCategory {
+  if (!billingRuleId) return "other";
+  if (billingType === "recurring") return "recurring";
+  if (billingType === "one_time") return "one_time";
+  return "other";
+}
+
 export async function getClientBillingProfile(supabase: TypedClient, clientId: string) {
   const { data, error } = await supabase
     .from("client_billing_profiles")
@@ -132,6 +153,7 @@ export async function listUpcomingInvoiceItemsForClient(
 export interface ManagementInvoiceItemRow {
   id: string;
   billing_rule_id: string | null;
+  billingType: BillingType | null;
   billing_month: string;
   revenue_month: string;
   subject: string;
@@ -147,6 +169,7 @@ export interface ManagementInvoiceItemRow {
 export interface ManagementInvoiceRow {
   id: string;
   client_id: string;
+  clientCode: string;
   clientCompanyName: string;
   billing_month: string;
   status: "planned" | "prepared" | "sent";
@@ -173,26 +196,29 @@ export async function listInvoicesForMonth(
 ): Promise<ManagementInvoiceRow[]> {
   const { data: invoices, error } = await supabase
     .from("invoices")
-    .select("*, invoice_items(*)")
+    .select("*, invoice_items(*, billing_rules(billing_type))")
     .eq("billing_month", billingMonthIso);
   if (error) throw error;
 
   const rows = (invoices ?? []) as unknown as (Database["public"]["Tables"]["invoices"]["Row"] & {
-    invoice_items: ManagementInvoiceItemRow[];
+    invoice_items: (Database["public"]["Tables"]["invoice_items"]["Row"] & {
+      billing_rules: { billing_type: BillingType } | null;
+    })[];
   })[];
 
   const clientIds = [...new Set(rows.map((r) => r.client_id))];
   const { data: clients } =
     clientIds.length > 0
-      ? await supabase.from("clients_view").select("id, company_name").in("id", clientIds)
-      : { data: [] as { id: string; company_name: string }[] };
-  const nameById = new Map((clients ?? []).map((c) => [c.id, c.company_name]));
+      ? await supabase.from("clients_view").select("id, client_code, company_name").in("id", clientIds)
+      : { data: [] as { id: string; client_code: string; company_name: string }[] };
+  const clientById = new Map((clients ?? []).map((c) => [c.id, c]));
 
   return rows
     .map((r) => ({
       id: r.id,
       client_id: r.client_id,
-      clientCompanyName: nameById.get(r.client_id) ?? "不明な顧客",
+      clientCode: clientById.get(r.client_id)?.client_code ?? "—",
+      clientCompanyName: clientById.get(r.client_id)?.company_name ?? "不明な顧客",
       billing_month: r.billing_month,
       status: r.status,
       billing_company_name_snapshot: r.billing_company_name_snapshot,
@@ -204,9 +230,98 @@ export async function listInvoicesForMonth(
       sent_at: r.sent_at,
       sent_by_staff_id: r.sent_by_staff_id,
       notes: r.notes,
-      items: r.invoice_items ?? [],
+      items: (r.invoice_items ?? []).map((item) => {
+        const { billing_rules, ...rest } = item;
+        return { ...rest, billingType: billing_rules?.billing_type ?? null };
+      }),
     }))
     .sort((a, b) => a.clientCompanyName.localeCompare(b.clientCompanyName, "ja"));
+}
+
+export type BillingStatusFilterKey = "all" | "unsent" | "planned" | "prepared" | "sent";
+
+/**
+ * /management/billing の画面表示・CSV/PDF出力の両方から使う、statusフィルターの唯一の実装。
+ * 呼び出し元ごとに絞り込みロジックが分岐しないようにする。
+ */
+export function filterInvoicesByStatus(
+  invoices: ManagementInvoiceRow[],
+  statusFilter: BillingStatusFilterKey,
+): ManagementInvoiceRow[] {
+  return invoices.filter((inv) => {
+    if (statusFilter === "unsent" && inv.status === "sent") return false;
+    if (statusFilter === "planned" && inv.status !== "planned") return false;
+    if (statusFilter === "prepared" && inv.status !== "prepared") return false;
+    if (statusFilter === "sent" && inv.status !== "sent") return false;
+    return true;
+  });
+}
+
+/** 顧客名の部分一致検索（画面・CSV/PDF出力で共通）。 */
+export function filterInvoicesByClientName(invoices: ManagementInvoiceRow[], nameQuery: string): ManagementInvoiceRow[] {
+  const q = nameQuery.trim().toLowerCase();
+  if (!q) return invoices;
+  return invoices.filter((inv) => inv.clientCompanyName.toLowerCase().includes(q));
+}
+
+export const BILLING_ITEM_STATUS_LABELS: Record<ManagementInvoiceRow["status"], string> = {
+  planned: "請求予定",
+  prepared: "作成済",
+  sent: "送付済み",
+};
+
+export const BILLING_ITEM_CATEGORY_LABELS: Record<BillingItemCategory, string> = {
+  recurring: "定期",
+  one_time: "スポット",
+  other: "その他",
+};
+
+export interface BillingExportRow {
+  clientCode: string;
+  clientCompanyName: string;
+  subject: string;
+  billingMonth: string;
+  revenueMonth: string;
+  category: BillingItemCategory;
+  amount: number;
+  statusLabel: string;
+  billingCompanyNameSnapshot: string | null;
+  billingEmailSnapshot: string | null;
+}
+
+/**
+ * CSV/PDF出力用に、画面表示（invoice単位）をinvoice_item単位のフラットな行へ変換する。
+ * 金額はeffectiveInvoiceItemAmount、状態は取消済みを優先表示する（画面の履歴タブ表示と同じ扱い）。
+ * 合計計算はこの関数の出力ではなく、画面と同じ「未取消のみ合算」ロジック（sumActiveInvoiceAmount）を別途使う。
+ */
+export function buildBillingExportRows(invoices: ManagementInvoiceRow[]): BillingExportRow[] {
+  const rows: BillingExportRow[] = [];
+  for (const invoice of invoices) {
+    for (const item of invoice.items) {
+      rows.push({
+        clientCode: invoice.clientCode,
+        clientCompanyName: invoice.clientCompanyName,
+        subject: item.subject,
+        billingMonth: item.billing_month,
+        revenueMonth: item.revenue_month,
+        category: categorizeInvoiceItem(item.billing_rule_id, item.billingType),
+        amount: effectiveInvoiceItemAmount(item),
+        statusLabel: item.cancelled_at !== null ? "取消済み" : BILLING_ITEM_STATUS_LABELS[invoice.status],
+        billingCompanyNameSnapshot: invoice.billing_company_name_snapshot,
+        billingEmailSnapshot: invoice.billing_email_snapshot,
+      });
+    }
+  }
+  return rows;
+}
+
+/** 画面の「合計」と同じ計算（取消済みは合計に含めない）。CSV/PDFの合計表示にもこれを使う。 */
+export function sumActiveInvoiceAmount(invoices: ManagementInvoiceRow[]): number {
+  return invoices.reduce(
+    (sum, inv) =>
+      sum + inv.items.filter((i) => i.cancelled_at === null).reduce((s, i) => s + effectiveInvoiceItemAmount(i), 0),
+    0,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -281,11 +396,6 @@ async function getBillingTypesByRuleIds(supabase: TypedClient, ruleIds: string[]
   return new Map((data ?? []).map((r) => [r.id, r.billing_type]));
 }
 
-/** invoice_itemsの正式金額。Phase 4と同じ定義（amount_override優先、なければtax_excluded_amount）を売上集計でも統一して使う。 */
-function effectiveRevenueAmount(item: { amount_override: number | null; tax_excluded_amount: number }): number {
-  return item.amount_override ?? item.tax_excluded_amount;
-}
-
 export interface RevenueMonthlyTrendRow {
   monthIso: string;
   total: number;
@@ -340,37 +450,33 @@ export async function getRevenueDashboardData(
   const ruleIds = [...new Set(revenueItems.map((i) => i.billing_rule_id).filter((id): id is string => id !== null))];
   const billingTypeByRuleId = await getBillingTypesByRuleIds(supabase, ruleIds);
 
-  function categoryOf(item: RevenueItemRow): "recurring" | "one_time" | "other" {
-    if (!item.billing_rule_id) return "other";
-    const billingType = billingTypeByRuleId.get(item.billing_rule_id);
-    if (billingType === "recurring") return "recurring";
-    if (billingType === "one_time") return "one_time";
-    return "other";
+  function categoryOf(item: RevenueItemRow): BillingItemCategory {
+    return categorizeInvoiceItem(item.billing_rule_id, item.billing_rule_id ? billingTypeByRuleId.get(item.billing_rule_id) : null);
   }
 
   const thisMonthItems = revenueItems.filter((i) => i.revenue_month === targetMonthIso);
   const nextMonthRevenue = revenueItems
     .filter((i) => i.revenue_month === nextMonthIso)
-    .reduce((sum, i) => sum + effectiveRevenueAmount(i), 0);
+    .reduce((sum, i) => sum + effectiveInvoiceItemAmount(i), 0);
 
   let recurringRevenue = 0;
   let oneTimeRevenue = 0;
   let otherRevenue = 0;
   for (const item of thisMonthItems) {
-    const amount = effectiveRevenueAmount(item);
+    const amount = effectiveInvoiceItemAmount(item);
     const category = categoryOf(item);
     if (category === "recurring") recurringRevenue += amount;
     else if (category === "one_time") oneTimeRevenue += amount;
     else otherRevenue += amount;
   }
 
-  const billingPlanned = billingMonthItems.reduce((sum, i) => sum + effectiveRevenueAmount(i), 0);
+  const billingPlanned = billingMonthItems.reduce((sum, i) => sum + effectiveInvoiceItemAmount(i), 0);
   const unsent = billingMonthItems
     .filter((i) => i.invoices?.status !== "sent")
-    .reduce((sum, i) => sum + effectiveRevenueAmount(i), 0);
+    .reduce((sum, i) => sum + effectiveInvoiceItemAmount(i), 0);
   const sent = billingMonthItems
     .filter((i) => i.invoices?.status === "sent")
-    .reduce((sum, i) => sum + effectiveRevenueAmount(i), 0);
+    .reduce((sum, i) => sum + effectiveInvoiceItemAmount(i), 0);
 
   const trendMonths: string[] = [];
   for (let offset = -5; offset <= 0; offset += 1) {
@@ -382,7 +488,7 @@ export async function getRevenueDashboardData(
     let oneTime = 0;
     let other = 0;
     for (const item of items) {
-      const amount = effectiveRevenueAmount(item);
+      const amount = effectiveInvoiceItemAmount(item);
       const category = categoryOf(item);
       if (category === "recurring") recurring += amount;
       else if (category === "one_time") oneTime += amount;
@@ -401,7 +507,7 @@ export async function getRevenueDashboardData(
   const byClient = new Map<string, { recurring: number; oneTime: number; other: number }>();
   for (const item of thisMonthItems) {
     const entry = byClient.get(item.client_id) ?? { recurring: 0, oneTime: 0, other: 0 };
-    const amount = effectiveRevenueAmount(item);
+    const amount = effectiveInvoiceItemAmount(item);
     const category = categoryOf(item);
     if (category === "recurring") entry.recurring += amount;
     else if (category === "one_time") entry.oneTime += amount;

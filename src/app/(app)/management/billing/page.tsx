@@ -3,15 +3,17 @@ import { redirect } from "next/navigation";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { canAccessManagementFeatures } from "@/lib/auth/roles";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { listActiveStaff } from "@/lib/clients/queries";
+import { listActiveStaff, listClients } from "@/lib/clients/queries";
 import {
+  effectiveInvoiceItemAmount,
+  filterInvoicesByClientName,
+  filterInvoicesByStatus,
   listInvoicesForMonth,
-  type ManagementInvoiceItemRow,
   type ManagementInvoiceRow,
 } from "@/lib/billing/queries";
 import { addMonthsIso, currentMonthIsoJst, formatMonthLabel, monthInputToIso } from "@/lib/billing/generate";
 import { PageContainer } from "@/components/PageContainer";
-import { markInvoicePreparedAction, markInvoiceSentAction } from "./actions";
+import { createOneTimeBillingRuleFromManagementAction, markInvoicePreparedAction, markInvoiceSentAction } from "./actions";
 import { BillingRollingWindowEnsurer } from "@/components/BillingRollingWindowEnsurer";
 
 const INVOICE_STATUS_LABELS: Record<ManagementInvoiceRow["status"], string> = {
@@ -35,12 +37,8 @@ const STATUS_FILTERS = [
 ] as const;
 type StatusFilterKey = (typeof STATUS_FILTERS)[number]["key"];
 
-function effectiveAmount(item: ManagementInvoiceItemRow): number {
-  return item.amount_override ?? item.tax_excluded_amount;
-}
-
 function invoiceTotal(invoice: ManagementInvoiceRow): number {
-  return invoice.items.filter((i) => i.cancelled_at === null).reduce((sum, i) => sum + effectiveAmount(i), 0);
+  return invoice.items.filter((i) => i.cancelled_at === null).reduce((sum, i) => sum + effectiveInvoiceItemAmount(i), 0);
 }
 
 function yen(amount: number): string {
@@ -82,9 +80,10 @@ export default async function BillingManagementPage({
   const nameQuery = (q ?? "").trim();
 
   const supabase = await createSupabaseServerClient();
-  const [invoices, staffOptions] = await Promise.all([
+  const [invoices, staffOptions, clientOptions] = await Promise.all([
     listInvoicesForMonth(supabase, billingMonthIso),
     listActiveStaff(supabase),
+    listClients(supabase),
   ]);
   const staffNameById = new Map(staffOptions.map((s) => [s.id, `${s.last_name} ${s.first_name}`]));
 
@@ -95,14 +94,8 @@ export default async function BillingManagementPage({
   const invoiceCount = invoices.length;
   const unsentCount = invoices.filter((inv) => inv.status !== "sent").length;
 
-  const filteredInvoices = invoices.filter((inv) => {
-    if (statusFilter === "unsent" && inv.status === "sent") return false;
-    if (statusFilter === "planned" && inv.status !== "planned") return false;
-    if (statusFilter === "prepared" && inv.status !== "prepared") return false;
-    if (statusFilter === "sent" && inv.status !== "sent") return false;
-    if (nameQuery && !inv.clientCompanyName.toLowerCase().includes(nameQuery.toLowerCase())) return false;
-    return true;
-  });
+  // CSV/PDF出力（export route・print page）と同じ関数で絞り込む（画面と数字が食い違わないように）。
+  const filteredInvoices = filterInvoicesByClientName(filterInvoicesByStatus(invoices, statusFilter), nameQuery);
 
   function buildUrl(overrides: Record<string, string | undefined>): string {
     const params = new URLSearchParams();
@@ -116,24 +109,157 @@ export default async function BillingManagementPage({
     return `/management/billing?${params.toString()}`;
   }
 
+  function buildExportUrl(basePath: string): string {
+    const params = new URLSearchParams();
+    params.set("month", monthQuery);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (nameQuery) params.set("q", nameQuery);
+    return `${basePath}?${params.toString()}`;
+  }
+
   return (
     <PageContainer variant="wide" className="gap-6 bg-neutral-50 py-6 sm:py-8">
       <BillingRollingWindowEnsurer />
 
-      <div>
-        <Link href="/management" className="text-sm text-neutral-500">
-          ← 管理ダッシュボードに戻る
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold text-neutral-900">請求管理</h1>
-        <p className="mt-1 text-xs text-neutral-500">
-          今月、誰に・何の内容で・いくらの請求書を送る必要があるかを確認できます（すべて税抜表示）。
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Link href="/management" className="text-sm text-neutral-500">
+            ← 管理ダッシュボードに戻る
+          </Link>
+          <h1 className="mt-2 text-xl font-semibold text-neutral-900">請求管理</h1>
+          <p className="mt-1 text-xs text-neutral-500">
+            今月、誰に・何の内容で・いくらの請求書を送る必要があるかを確認できます（すべて税抜表示）。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={buildExportUrl("/management/billing/export")}
+            className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700"
+          >
+            CSV出力
+          </a>
+          <Link
+            href={buildExportUrl("/management/billing/print")}
+            target="_blank"
+            className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700"
+          >
+            PDF出力
+          </Link>
+        </div>
       </div>
 
-      {saved ? (
+      {saved === "created" ? (
+        <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">スポット請求を登録しました。</p>
+      ) : saved ? (
         <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">更新しました。</p>
       ) : null}
       {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
+
+      <details className="rounded-2xl border border-neutral-200 bg-white p-4 sm:p-5">
+        <summary className="cursor-pointer text-sm font-semibold text-[var(--accent-strong)]">＋ 請求を登録</summary>
+        <form
+          action={createOneTimeBillingRuleFromManagementAction}
+          className="mt-3 flex flex-col gap-3 rounded-md border border-neutral-200 p-3"
+        >
+          <input type="hidden" name="month" value={monthQuery} />
+          <label className="text-sm font-medium text-neutral-700">
+            顧客
+            <select
+              name="clientId"
+              required
+              defaultValue=""
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+            >
+              <option value="" disabled>
+                選択してください
+              </option>
+              {clientOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.client_code} {c.company_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-neutral-700">
+            請求内容
+            <input
+              name="subject"
+              type="text"
+              required
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+            />
+          </label>
+          <label className="text-sm font-medium text-neutral-700">
+            説明・備考（任意）
+            <input
+              name="description"
+              type="text"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+            />
+          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-neutral-700">
+              数量
+              <input
+                name="quantity"
+                type="number"
+                step="0.01"
+                min="0.01"
+                required
+                defaultValue="1"
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+              />
+            </label>
+            <label className="text-sm font-medium text-neutral-700">
+              金額（税抜・単価）
+              <input
+                name="unitPriceExTax"
+                type="number"
+                step="1"
+                min="1"
+                required
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+              />
+            </label>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-neutral-700">
+              請求月
+              <input
+                name="billingMonth"
+                type="month"
+                required
+                defaultValue={monthQuery}
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+              />
+            </label>
+            <label className="text-sm font-medium text-neutral-700">
+              売上計上月
+              <input
+                name="revenueMonth"
+                type="month"
+                required
+                defaultValue={monthQuery}
+                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+              />
+            </label>
+          </div>
+          <label className="text-sm font-medium text-neutral-700">
+            備考（任意）
+            <input
+              name="notes"
+              type="text"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+            />
+          </label>
+          <button
+            type="submit"
+            className="mt-1 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white hover:bg-[var(--accent-strong)] sm:w-auto"
+          >
+            登録する
+          </button>
+        </form>
+      </details>
 
       <div className="flex items-center justify-center gap-4">
         <Link
@@ -274,7 +400,7 @@ export default async function BillingManagementPage({
                         ) : null}
                       </span>
                       <span className="text-xs text-neutral-600 tabular-nums">
-                        {item.quantity} × {item.unit_price_ex_tax.toLocaleString("ja-JP")}円 = {yen(effectiveAmount(item))}
+                        {item.quantity} × {item.unit_price_ex_tax.toLocaleString("ja-JP")}円 = {yen(effectiveInvoiceItemAmount(item))}
                       </span>
                     </li>
                   ))}

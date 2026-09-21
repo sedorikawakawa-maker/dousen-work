@@ -3,7 +3,11 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireBillingAccess } from "@/lib/billing/authGuard";
-import { ensureBillingRollingWindowForAllClients } from "@/lib/billing/generate";
+import {
+  createOneTimeBillingRule,
+  ensureBillingRollingWindowForAllClients,
+  parseOneTimeBillingFormData,
+} from "@/lib/billing/generate";
 
 function billingManagementUrl(params: Record<string, string>): string {
   const search = new URLSearchParams(params).toString();
@@ -60,4 +64,40 @@ export async function ensureBillingRollingWindowAction(): Promise<{ rulesProcess
   await requireBillingAccess();
   const supabase = await createSupabaseServerClient();
   return ensureBillingRollingWindowForAllClients(supabase);
+}
+
+/**
+ * /management/billing 上部の「＋ 請求を登録」フォームからのスポット請求登録。
+ * クライアント詳細画面のcreateOneTimeBillingRuleActionと同じ共通処理
+ * （@/lib/billing/generateのparseOneTimeBillingFormData / createOneTimeBillingRule）を使い、
+ * billing_rule/invoice/invoice_item/activity_logsの生成経路を1本化する。
+ * 権限チェックはrequireBillingAccess()（UIを隠すだけでなくAction側でも必ず検証）。
+ */
+export async function createOneTimeBillingRuleFromManagementAction(formData: FormData) {
+  const staff = await requireBillingAccess();
+  const month = String(formData.get("month") ?? "").trim();
+  const clientId = String(formData.get("clientId") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  if (clientId) {
+    const { data: client } = await supabase.from("clients_view").select("id").eq("id", clientId).maybeSingle();
+    if (!client) {
+      redirect(billingManagementUrl({ month, error: "顧客が見つかりません。" }));
+    }
+  }
+
+  const { fields, error: validationError } = parseOneTimeBillingFormData(formData, clientId, {
+    requireRevenueMonth: true,
+    disallowZeroAmount: true,
+  });
+  if (validationError || !fields) {
+    redirect(billingManagementUrl({ month, error: validationError ?? "入力内容を確認してください。" }));
+  }
+
+  const result = await createOneTimeBillingRule(supabase, fields, staff.id);
+  redirect(
+    billingManagementUrl(
+      result.error ? { month, error: result.error } : { month, saved: "created" },
+    ),
+  );
 }

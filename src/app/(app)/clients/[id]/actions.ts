@@ -6,10 +6,11 @@ import { getCurrentStaff } from "@/lib/auth/session";
 import { canViewFinance } from "@/lib/auth/roles";
 import { requireBillingAccess } from "@/lib/billing/authGuard";
 import {
+  createOneTimeBillingRule,
   deactivateRecurringBillingRule,
-  generateInvoiceItemForOneTimeRule,
   generateInvoiceItemsForRecurringRule,
   monthInputToIso,
+  parseOneTimeBillingFormData,
   REVENUE_MONTH_OFFSET_OPTIONS,
   splitAndReplaceRecurringBillingRule,
 } from "@/lib/billing/generate";
@@ -466,64 +467,13 @@ export async function createOneTimeBillingRuleAction(formData: FormData) {
     redirect(billingUrl(clientId, { error: "顧客が見つかりません。" }));
   }
 
-  const subject = String(formData.get("subject") ?? "").trim();
-  if (!subject) {
-    redirect(billingUrl(clientId, { error: "件名を入力してください。" }));
-  }
-  const quantity = Number(formData.get("quantity") ?? "1");
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    redirect(billingUrl(clientId, { error: "数量は0より大きい数値で入力してください。" }));
-  }
-  const unitPriceExTax = Number(formData.get("unitPriceExTax") ?? "");
-  if (!Number.isFinite(unitPriceExTax) || unitPriceExTax < 0) {
-    redirect(billingUrl(clientId, { error: "単価は0以上の数値で入力してください。" }));
-  }
-  const billingMonth = monthInputToIso(formData.get("billingMonth") as string | null);
-  if (!billingMonth) {
-    redirect(billingUrl(clientId, { error: "請求月を入力してください。" }));
-  }
-  const revenueMonthRaw = emptyToNull(formData.get("revenueMonth"));
-  const revenueMonth = (revenueMonthRaw ? monthInputToIso(revenueMonthRaw) : null) ?? billingMonth;
-
-  const { data: newRule, error } = await supabase
-    .from("billing_rules")
-    .insert({
-      client_id: clientId,
-      billing_type: "one_time",
-      subject,
-      description: emptyToNull(formData.get("description")),
-      quantity,
-      unit_price_ex_tax: unitPriceExTax,
-      notes: emptyToNull(formData.get("notes")),
-      revenue_month_offset_months: 0,
-      valid_from: null,
-      valid_to: null,
-      one_time_billing_month: billingMonth,
-      one_time_revenue_month: revenueMonth,
-      is_active: true,
-      created_by_staff_id: staff.id,
-    })
-    .select("*")
-    .single();
-
-  if (error || !newRule) {
-    redirect(billingUrl(clientId, { error: error?.message ?? "登録に失敗しました" }));
+  const { fields, error: validationError } = parseOneTimeBillingFormData(formData, clientId);
+  if (validationError || !fields) {
+    redirect(billingUrl(clientId, { error: validationError ?? "入力内容を確認してください。" }));
   }
 
-  const result = await generateInvoiceItemForOneTimeRule(supabase, newRule);
-  if (result.skipped) {
-    const reasonMessage =
-      result.reason === "invoice_required_false"
-        ? "この顧客は請求書送付不要のため、明細は生成されませんでした（設定は保存済みです）。"
-        : result.reason === "after_contract_end"
-          ? "契約終了予定日より後の月のため、明細は生成されませんでした（設定は保存済みです）。"
-          : result.reason === "invoice_locked"
-            ? "対象月の請求書は既に作成済み/送付済みのため、明細は生成されませんでした（設定は保存済みです）。"
-            : "明細の生成に失敗しました（設定は保存済みです）。";
-    redirect(billingUrl(clientId, { error: reasonMessage }));
-  }
-
-  redirect(billingUrl(clientId, { saved: "1" }));
+  const result = await createOneTimeBillingRule(supabase, fields, staff.id);
+  redirect(billingUrl(clientId, result.error ? { error: result.error } : { saved: "1" }));
 }
 
 /**

@@ -21,16 +21,18 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   ]);
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
-      <Sidebar
-        role={staff.role}
-        unreadCount={unreadCount}
-        wcheckWaitingCount={wcheckWaitingCount}
-        staffPresenceRoster={staffPresenceRoster}
-        currentStaffId={staff.id}
-        currentStaffName={`${staff.last_name} ${staff.first_name}`}
-        onLogout={logoutAction}
-      />
+    <div className="min-h-screen lg:grid lg:grid-cols-[250px_minmax(0,1fr)] print:block">
+      <div className="print:hidden">
+        <Sidebar
+          role={staff.role}
+          unreadCount={unreadCount}
+          wcheckWaitingCount={wcheckWaitingCount}
+          staffPresenceRoster={staffPresenceRoster}
+          currentStaffId={staff.id}
+          currentStaffName={`${staff.last_name} ${staff.first_name}`}
+          onLogout={logoutAction}
+        />
+      </div>
       <main className="min-w-0">{children}</main>
     </div>
   );

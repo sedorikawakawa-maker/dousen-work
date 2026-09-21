@@ -432,3 +432,153 @@ export async function deactivateRecurringBillingRule(
 
   return { error: null };
 }
+
+// ---------------------------------------------------------------------------
+// スポット請求（one_time）の新規登録。クライアント詳細画面と/management/billingの
+// どちらから登録しても、同じbilling_rule/invoice/invoice_item生成経路（このファイルの
+// createOneTimeBillingRule）だけを通す。activity_logsはbilling_rules/invoice_itemsの
+// 既存トリガーが自動記録するため、呼び出し元での重複記録は不要。
+// ---------------------------------------------------------------------------
+
+function emptyToNull(value: FormDataEntryValue | null): string | null {
+  const text = String(value ?? "").trim();
+  return text === "" ? null : text;
+}
+
+export interface OneTimeBillingFormFields {
+  clientId: string;
+  subject: string;
+  description: string | null;
+  quantity: number;
+  unitPriceExTax: number;
+  billingMonthIso: string;
+  revenueMonthIso: string;
+  notes: string | null;
+}
+
+export interface ParseOneTimeBillingFormDataOptions {
+  /** falseの場合、売上計上月が未入力なら請求月と同じ扱いにする（クライアント詳細画面の既存仕様）。 */
+  requireRevenueMonth?: boolean;
+  /**
+   * trueの場合、金額(単価)が0円ちょうども不正とする。falseの場合は既存のクライアント詳細画面と
+   * 同じ「0円以上」を許容する（既存スポット請求登録の挙動を変えないためのデフォルト）。
+   */
+  disallowZeroAmount?: boolean;
+}
+
+/**
+ * スポット請求登録フォームの共通バリデーション。クライアント詳細画面・/management/billingの
+ * 両方のServer Actionから呼び出し、入力チェックの実装を1本化する。
+ */
+export function parseOneTimeBillingFormData(
+  formData: FormData,
+  clientId: string,
+  options: ParseOneTimeBillingFormDataOptions = {},
+): { fields: OneTimeBillingFormFields | null; error: string | null } {
+  if (!clientId) {
+    return { fields: null, error: "顧客を選択してください。" };
+  }
+
+  const subject = String(formData.get("subject") ?? "").trim();
+  if (!subject) {
+    return { fields: null, error: "件名を入力してください。" };
+  }
+
+  const quantity = Number(formData.get("quantity") ?? "1");
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return { fields: null, error: "数量は0より大きい数値で入力してください。" };
+  }
+
+  const unitPriceExTax = Number(formData.get("unitPriceExTax") ?? "");
+  if (!Number.isFinite(unitPriceExTax) || unitPriceExTax < 0 || (options.disallowZeroAmount && unitPriceExTax === 0)) {
+    return {
+      fields: null,
+      error: options.disallowZeroAmount
+        ? "金額は0円より大きい数値で入力してください。"
+        : "単価は0以上の数値で入力してください。",
+    };
+  }
+
+  const billingMonthIso = monthInputToIso(formData.get("billingMonth") as string | null);
+  if (!billingMonthIso) {
+    return { fields: null, error: "請求月を入力してください。" };
+  }
+
+  const revenueMonthRaw = emptyToNull(formData.get("revenueMonth") as string | null);
+  const revenueMonthIso = revenueMonthRaw ? monthInputToIso(revenueMonthRaw) : null;
+  if (revenueMonthRaw && !revenueMonthIso) {
+    return { fields: null, error: "売上計上月の形式が不正です。" };
+  }
+  if (options.requireRevenueMonth && !revenueMonthIso) {
+    return { fields: null, error: "売上計上月を入力してください。" };
+  }
+
+  return {
+    fields: {
+      clientId,
+      subject,
+      description: emptyToNull(formData.get("description") as string | null),
+      quantity,
+      unitPriceExTax,
+      billingMonthIso,
+      revenueMonthIso: revenueMonthIso ?? billingMonthIso,
+      notes: emptyToNull(formData.get("notes") as string | null),
+    },
+    error: null,
+  };
+}
+
+export interface CreateOneTimeBillingRuleResult {
+  error: string | null;
+  ruleId?: string;
+}
+
+/**
+ * スポット請求（one_time billing_rule）の新規作成＋即時のinvoice/invoice_item生成。
+ * INSERT自体はこの関数だけが行う（呼び出し元でbilling_rulesへの重複INSERT実装をしない）。
+ */
+export async function createOneTimeBillingRule(
+  supabase: TypedClient,
+  input: OneTimeBillingFormFields,
+  createdByStaffId: string,
+): Promise<CreateOneTimeBillingRuleResult> {
+  const { data: newRule, error } = await supabase
+    .from("billing_rules")
+    .insert({
+      client_id: input.clientId,
+      billing_type: "one_time",
+      subject: input.subject,
+      description: input.description,
+      quantity: input.quantity,
+      unit_price_ex_tax: input.unitPriceExTax,
+      notes: input.notes,
+      revenue_month_offset_months: 0,
+      valid_from: null,
+      valid_to: null,
+      one_time_billing_month: input.billingMonthIso,
+      one_time_revenue_month: input.revenueMonthIso,
+      is_active: true,
+      created_by_staff_id: createdByStaffId,
+    })
+    .select("*")
+    .single();
+
+  if (error || !newRule) {
+    return { error: error?.message ?? "登録に失敗しました" };
+  }
+
+  const result = await generateInvoiceItemForOneTimeRule(supabase, newRule);
+  if (result.skipped) {
+    const reasonMessage =
+      result.reason === "invoice_required_false"
+        ? "この顧客は請求書送付不要のため、明細は生成されませんでした（設定は保存済みです）。"
+        : result.reason === "after_contract_end"
+          ? "契約終了予定日より後の月のため、明細は生成されませんでした（設定は保存済みです）。"
+          : result.reason === "invoice_locked"
+            ? "対象月の請求書は既に作成済み/送付済みのため、明細は生成されませんでした（設定は保存済みです）。"
+            : "明細の生成に失敗しました（設定は保存済みです）。";
+    return { error: reasonMessage, ruleId: newRule.id };
+  }
+
+  return { error: null, ruleId: newRule.id };
+}
