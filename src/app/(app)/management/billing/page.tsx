@@ -13,8 +13,9 @@ import {
 } from "@/lib/billing/queries";
 import { addMonthsIso, currentMonthIsoJst, formatMonthLabel, monthInputToIso } from "@/lib/billing/generate";
 import { PageContainer } from "@/components/PageContainer";
-import { createOneTimeBillingRuleFromManagementAction, markInvoicePreparedAction, markInvoiceSentAction } from "./actions";
+import { cancelOneTimeBillingRuleFromManagementAction, markInvoicePreparedAction, markInvoiceSentAction } from "./actions";
 import { BillingRollingWindowEnsurer } from "@/components/BillingRollingWindowEnsurer";
+import { BillingRegistrationForm } from "@/components/BillingRegistrationForm";
 
 const INVOICE_STATUS_LABELS: Record<ManagementInvoiceRow["status"], string> = {
   planned: "請求予定",
@@ -150,116 +151,14 @@ export default async function BillingManagementPage({
 
       {saved === "created" ? (
         <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">スポット請求を登録しました。</p>
+      ) : saved === "cancelled" ? (
+        <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">スポット請求を取消しました。</p>
       ) : saved ? (
         <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">更新しました。</p>
       ) : null}
       {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
 
-      <details className="rounded-2xl border border-neutral-200 bg-white p-4 sm:p-5">
-        <summary className="cursor-pointer text-sm font-semibold text-[var(--accent-strong)]">＋ 請求を登録</summary>
-        <form
-          action={createOneTimeBillingRuleFromManagementAction}
-          className="mt-3 flex flex-col gap-3 rounded-md border border-neutral-200 p-3"
-        >
-          <input type="hidden" name="month" value={monthQuery} />
-          <label className="text-sm font-medium text-neutral-700">
-            顧客
-            <select
-              name="clientId"
-              required
-              defaultValue=""
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            >
-              <option value="" disabled>
-                選択してください
-              </option>
-              {clientOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.client_code} {c.company_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm font-medium text-neutral-700">
-            請求内容
-            <input
-              name="subject"
-              type="text"
-              required
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            />
-          </label>
-          <label className="text-sm font-medium text-neutral-700">
-            説明・備考（任意）
-            <input
-              name="description"
-              type="text"
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            />
-          </label>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="text-sm font-medium text-neutral-700">
-              数量
-              <input
-                name="quantity"
-                type="number"
-                step="0.01"
-                min="0.01"
-                required
-                defaultValue="1"
-                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-              />
-            </label>
-            <label className="text-sm font-medium text-neutral-700">
-              金額（税抜・単価）
-              <input
-                name="unitPriceExTax"
-                type="number"
-                step="1"
-                min="1"
-                required
-                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-              />
-            </label>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="text-sm font-medium text-neutral-700">
-              請求月
-              <input
-                name="billingMonth"
-                type="month"
-                required
-                defaultValue={monthQuery}
-                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-              />
-            </label>
-            <label className="text-sm font-medium text-neutral-700">
-              売上計上月
-              <input
-                name="revenueMonth"
-                type="month"
-                required
-                defaultValue={monthQuery}
-                className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-              />
-            </label>
-          </div>
-          <label className="text-sm font-medium text-neutral-700">
-            備考（任意）
-            <input
-              name="notes"
-              type="text"
-              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
-            />
-          </label>
-          <button
-            type="submit"
-            className="mt-1 w-full rounded-full bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white hover:bg-[var(--accent-strong)] sm:w-auto"
-          >
-            登録する
-          </button>
-        </form>
-      </details>
+      <BillingRegistrationForm clients={clientOptions} defaultMonth={monthQuery} />
 
       <div className="flex items-center justify-center gap-4">
         <Link
@@ -399,8 +298,37 @@ export default async function BillingManagementPage({
                           <span className="ml-1.5 text-xs text-neutral-400">（売上計上: {formatMonthLabel(item.revenue_month)}）</span>
                         ) : null}
                       </span>
-                      <span className="text-xs text-neutral-600 tabular-nums">
-                        {item.quantity} × {item.unit_price_ex_tax.toLocaleString("ja-JP")}円 = {yen(effectiveInvoiceItemAmount(item))}
+                      <span className="flex items-center gap-2">
+                        <span className="text-xs text-neutral-600 tabular-nums">
+                          {item.quantity} × {item.unit_price_ex_tax.toLocaleString("ja-JP")}円 = {yen(effectiveInvoiceItemAmount(item))}
+                        </span>
+                        {item.billingType === "one_time" && item.billing_rule_id && invoice.status === "planned" ? (
+                          <details>
+                            <summary className="cursor-pointer text-xs text-red-600 underline marker:content-none">取消する</summary>
+                            <form
+                              action={cancelOneTimeBillingRuleFromManagementAction}
+                              className="mt-2 flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3"
+                            >
+                              <input type="hidden" name="month" value={monthQuery} />
+                              <input type="hidden" name="ruleId" value={item.billing_rule_id} />
+                              <label className="text-xs font-medium text-neutral-700">
+                                取消理由（必須）
+                                <input
+                                  name="cancelReason"
+                                  type="text"
+                                  required
+                                  className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
+                                />
+                              </label>
+                              <button
+                                type="submit"
+                                className="self-start rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
+                              >
+                                取消する（確定）
+                              </button>
+                            </form>
+                          </details>
+                        ) : null}
                       </span>
                     </li>
                   ))}

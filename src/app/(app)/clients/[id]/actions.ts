@@ -7,8 +7,8 @@ import { canViewFinance } from "@/lib/auth/roles";
 import { requireBillingAccess } from "@/lib/billing/authGuard";
 import {
   createOneTimeBillingRule,
+  createRecurringBillingRule,
   deactivateRecurringBillingRule,
-  generateInvoiceItemsForRecurringRule,
   monthInputToIso,
   parseOneTimeBillingFormData,
   REVENUE_MONTH_OFFSET_OPTIONS,
@@ -423,34 +423,23 @@ export async function createRecurringBillingRuleAction(formData: FormData) {
     redirect(billingUrl(clientId, { error: "売上計上月の指定が不正です。" }));
   }
 
-  const { data: newRule, error } = await supabase
-    .from("billing_rules")
-    .insert({
-      client_id: clientId,
-      billing_type: "recurring",
+  const result = await createRecurringBillingRule(
+    supabase,
+    {
+      clientId,
       subject,
       description: emptyToNull(formData.get("description")),
       quantity,
-      unit_price_ex_tax: unitPriceExTax,
+      unitPriceExTax,
+      validFromIso: validFrom,
+      validToIso: validTo,
+      revenueMonthOffsetMonths: revenueMonthOffset,
       notes: emptyToNull(formData.get("notes")),
-      valid_from: validFrom,
-      valid_to: validTo,
-      revenue_month_offset_months: revenueMonthOffset,
-      one_time_billing_month: null,
-      one_time_revenue_month: null,
-      is_active: true,
-      created_by_staff_id: staff.id,
-    })
-    .select("*")
-    .single();
+    },
+    staff.id,
+  );
 
-  if (error || !newRule) {
-    redirect(billingUrl(clientId, { error: error?.message ?? "登録に失敗しました" }));
-  }
-
-  await generateInvoiceItemsForRecurringRule(supabase, newRule);
-
-  redirect(billingUrl(clientId, { saved: "1" }));
+  redirect(billingUrl(clientId, result.error ? { error: result.error } : { saved: "1" }));
 }
 
 /**

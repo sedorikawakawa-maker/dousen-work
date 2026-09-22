@@ -582,3 +582,275 @@ export async function createOneTimeBillingRule(
 
   return { error: null, ruleId: newRule.id };
 }
+
+// ---------------------------------------------------------------------------
+// 定期請求（recurring）の新規登録。クライアント詳細画面の既存フォームと
+// /management/billingの複数摘要登録フォームの両方が、この関数だけを通す。
+// ---------------------------------------------------------------------------
+
+export interface RecurringBillingFormFields {
+  clientId: string;
+  subject: string;
+  description: string | null;
+  quantity: number;
+  unitPriceExTax: number;
+  validFromIso: string;
+  validToIso: string | null;
+  revenueMonthOffsetMonths: number;
+  notes: string | null;
+}
+
+export interface CreateRecurringBillingRuleResult {
+  error: string | null;
+  ruleId?: string;
+}
+
+/**
+ * 定期請求（recurring billing_rule）の新規作成＋現在月+2か月ローリング窓分の即時生成。
+ * INSERT自体はこの関数だけが行う（既存clients/[id]のcreateRecurringBillingRuleActionも
+ * この関数を呼ぶだけにし、重複INSERT実装を持たない）。
+ */
+export async function createRecurringBillingRule(
+  supabase: TypedClient,
+  input: RecurringBillingFormFields,
+  createdByStaffId: string,
+): Promise<CreateRecurringBillingRuleResult> {
+  const { data: newRule, error } = await supabase
+    .from("billing_rules")
+    .insert({
+      client_id: input.clientId,
+      billing_type: "recurring",
+      subject: input.subject,
+      description: input.description,
+      quantity: input.quantity,
+      unit_price_ex_tax: input.unitPriceExTax,
+      notes: input.notes,
+      valid_from: input.validFromIso,
+      valid_to: input.validToIso,
+      revenue_month_offset_months: input.revenueMonthOffsetMonths,
+      one_time_billing_month: null,
+      one_time_revenue_month: null,
+      is_active: true,
+      created_by_staff_id: createdByStaffId,
+    })
+    .select("*")
+    .single();
+
+  if (error || !newRule) {
+    return { error: error?.message ?? "登録に失敗しました" };
+  }
+
+  await generateInvoiceItemsForRecurringRule(supabase, newRule);
+
+  return { error: null, ruleId: newRule.id };
+}
+
+// ---------------------------------------------------------------------------
+// /management/billing の「＋ 請求を登録」：スポット/定期・複数摘要を1フォームで登録する。
+// 生成ロジック自体は上のcreateOneTimeBillingRule / createRecurringBillingRuleを
+// 摘要ごとに繰り返し呼ぶだけで、新しい生成処理は作らない。
+// 途中の摘要でDB書き込み自体が失敗した場合は、既存のcancel_one_time_billing_rule /
+// deactivateRecurringBillingRule（いずれも既存の「取消して履歴を残す」機構）を使って
+// それまでに作成済みの摘要を自動的に取消し、半端な状態が見えないようにする
+// （新規RPC・新規migrationは追加せず、既存の取消経路だけで補償する）。
+// ---------------------------------------------------------------------------
+
+export interface BillingLineItemInput {
+  subject: string;
+  description: string | null;
+  quantity: number;
+  unitPriceExTax: number;
+}
+
+export type BillingRegistrationKind = "spot" | "recurring";
+
+export interface BillingRegistrationInput {
+  kind: BillingRegistrationKind;
+  clientId: string;
+  items: BillingLineItemInput[];
+  /** kind==='spot'の場合必須（'YYYY-MM'）。 */
+  billingMonth?: string | null;
+  revenueMonth?: string | null;
+  /** kind==='recurring'の場合必須（'YYYY-MM'）。 */
+  validFrom?: string | null;
+  validTo?: string | null;
+}
+
+interface ValidatedBillingRegistration {
+  kind: BillingRegistrationKind;
+  clientId: string;
+  items: BillingLineItemInput[];
+  billingMonthIso: string;
+  revenueMonthIso: string;
+  validFromIso: string;
+  validToIso: string | null;
+}
+
+/**
+ * /management/billingの複数摘要登録フォームの入力チェック。既存の単一摘要フォーム
+ * （parseOneTimeBillingFormData / createRecurringBillingRuleAction）と同じ判定基準
+ * （数量>0、単価>0円、月の形式）を、摘要が複数ある場合にもすべて適用する。
+ */
+export function validateBillingRegistrationInput(
+  input: BillingRegistrationInput,
+): { data: ValidatedBillingRegistration | null; error: string | null } {
+  if (!input.clientId) {
+    return { data: null, error: "顧客を選択してください。" };
+  }
+  if (!input.items || input.items.length === 0) {
+    return { data: null, error: "摘要を1件以上入力してください。" };
+  }
+
+  for (let i = 0; i < input.items.length; i += 1) {
+    const item = input.items[i];
+    const label = `摘要${i + 1}`;
+    if (!item.subject || !item.subject.trim()) {
+      return { data: null, error: `${label}: 摘要名を入力してください。` };
+    }
+    if (!Number.isFinite(item.unitPriceExTax)) {
+      return { data: null, error: `${label}: 単価を入力してください。` };
+    }
+    if (item.unitPriceExTax <= 0) {
+      return { data: null, error: `${label}: 単価は0円より大きい数値で入力してください。` };
+    }
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+      return { data: null, error: `${label}: 数量は0より大きい数値で入力してください。` };
+    }
+  }
+
+  if (input.kind === "spot") {
+    const billingMonthIso = monthInputToIso(input.billingMonth);
+    if (!billingMonthIso) {
+      return { data: null, error: "請求月を入力してください。" };
+    }
+    const revenueMonthIso = monthInputToIso(input.revenueMonth);
+    if (!revenueMonthIso) {
+      return { data: null, error: "売上計上月を入力してください。" };
+    }
+    return {
+      data: {
+        kind: "spot",
+        clientId: input.clientId,
+        items: input.items,
+        billingMonthIso,
+        revenueMonthIso,
+        validFromIso: "",
+        validToIso: null,
+      },
+      error: null,
+    };
+  }
+
+  const validFromIso = monthInputToIso(input.validFrom);
+  if (!validFromIso) {
+    return { data: null, error: "開始月を入力してください。" };
+  }
+  const validToRaw = input.validTo ?? null;
+  const validToIso = validToRaw ? monthInputToIso(validToRaw) : null;
+  if (validToRaw && !validToIso) {
+    return { data: null, error: "終了月の形式が不正です。" };
+  }
+  if (validToIso && validToIso < validFromIso) {
+    return { data: null, error: "終了月は開始月以降にしてください。" };
+  }
+
+  return {
+    data: {
+      kind: "recurring",
+      clientId: input.clientId,
+      items: input.items,
+      billingMonthIso: "",
+      revenueMonthIso: "",
+      validFromIso,
+      validToIso,
+    },
+    error: null,
+  };
+}
+
+/** 補償ロールバック：作成済みone_time billing_rulesを、既存の取消RPCで自動取消する。 */
+async function rollbackCreatedOneTimeRules(supabase: TypedClient, ruleIds: string[]): Promise<void> {
+  for (const ruleId of ruleIds) {
+    await supabase.rpc("cancel_one_time_billing_rule", {
+      p_billing_rule_id: ruleId,
+      p_reason: "複数摘要登録の一部が失敗したため自動取消",
+    });
+  }
+}
+
+/** 補償ロールバック：作成済みrecurring billing_rulesを、既存の停止処理で自動停止する。 */
+async function rollbackCreatedRecurringRules(supabase: TypedClient, ruleIds: string[]): Promise<void> {
+  for (const ruleId of ruleIds) {
+    await deactivateRecurringBillingRule(supabase, ruleId);
+  }
+}
+
+export interface BillingRegistrationResult {
+  error: string | null;
+  createdRuleIds: string[];
+  itemCount: number;
+}
+
+/**
+ * バリデーション済みの複数摘要登録を実行する。摘要ごとにcreateOneTimeBillingRule /
+ * createRecurringBillingRuleを順に呼び出す（同じ請求月のスポットは既存のfind-or-create
+ * invoiceにより自動的に同じinvoiceへまとまる）。
+ * 途中の摘要でbilling_rule自体のINSERTが失敗した場合のみ、それまでの成功分を取消して
+ * エラーを返す（invoice_required=false等による「明細生成のみskip」は失敗扱いにしない）。
+ */
+export async function executeBillingRegistration(
+  supabase: TypedClient,
+  data: ValidatedBillingRegistration,
+  createdByStaffId: string,
+): Promise<BillingRegistrationResult> {
+  const createdRuleIds: string[] = [];
+
+  for (const item of data.items) {
+    if (data.kind === "spot") {
+      const result = await createOneTimeBillingRule(
+        supabase,
+        {
+          clientId: data.clientId,
+          subject: item.subject,
+          description: item.description,
+          quantity: item.quantity,
+          unitPriceExTax: item.unitPriceExTax,
+          billingMonthIso: data.billingMonthIso,
+          revenueMonthIso: data.revenueMonthIso,
+          notes: null,
+        },
+        createdByStaffId,
+      );
+      if (result.ruleId) {
+        createdRuleIds.push(result.ruleId);
+      } else {
+        await rollbackCreatedOneTimeRules(supabase, createdRuleIds);
+        return { error: result.error ?? "登録に失敗しました", createdRuleIds: [], itemCount: 0 };
+      }
+    } else {
+      const result = await createRecurringBillingRule(
+        supabase,
+        {
+          clientId: data.clientId,
+          subject: item.subject,
+          description: item.description,
+          quantity: item.quantity,
+          unitPriceExTax: item.unitPriceExTax,
+          validFromIso: data.validFromIso,
+          validToIso: data.validToIso,
+          revenueMonthOffsetMonths: 0,
+          notes: null,
+        },
+        createdByStaffId,
+      );
+      if (result.ruleId) {
+        createdRuleIds.push(result.ruleId);
+      } else {
+        await rollbackCreatedRecurringRules(supabase, createdRuleIds);
+        return { error: result.error ?? "登録に失敗しました", createdRuleIds: [], itemCount: 0 };
+      }
+    }
+  }
+
+  return { error: null, createdRuleIds, itemCount: data.items.length };
+}

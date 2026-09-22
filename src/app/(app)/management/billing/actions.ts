@@ -4,9 +4,10 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireBillingAccess } from "@/lib/billing/authGuard";
 import {
-  createOneTimeBillingRule,
   ensureBillingRollingWindowForAllClients,
-  parseOneTimeBillingFormData,
+  executeBillingRegistration,
+  validateBillingRegistrationInput,
+  type BillingRegistrationInput,
 } from "@/lib/billing/generate";
 
 function billingManagementUrl(params: Record<string, string>): string {
@@ -66,38 +67,63 @@ export async function ensureBillingRollingWindowAction(): Promise<{ rulesProcess
   return ensureBillingRollingWindowForAllClients(supabase);
 }
 
+export interface BillingRegistrationActionResult {
+  error: string | null;
+  itemCount?: number;
+}
+
 /**
- * /management/billing 上部の「＋ 請求を登録」フォームからのスポット請求登録。
- * クライアント詳細画面のcreateOneTimeBillingRuleActionと同じ共通処理
- * （@/lib/billing/generateのparseOneTimeBillingFormData / createOneTimeBillingRule）を使い、
- * billing_rule/invoice/invoice_item/activity_logsの生成経路を1本化する。
+ * /management/billing 上部の「＋ 請求を登録」フォームからの登録（スポット/定期・複数摘要対応）。
+ * クライアント詳細画面と同じ共通処理（@/lib/billing/generateのexecuteBillingRegistration経由で
+ * createOneTimeBillingRule / createRecurringBillingRule）を使い、生成経路を1本化する。
+ * フォームがクライアントコンポーネントのため、FormDataではなく構造化オブジェクトを直接受け取り、
+ * redirectではなく結果オブジェクトを返す（呼び出し側でrouter.refresh()して一覧を更新する）。
  * 権限チェックはrequireBillingAccess()（UIを隠すだけでなくAction側でも必ず検証）。
  */
-export async function createOneTimeBillingRuleFromManagementAction(formData: FormData) {
+export async function createBillingRegistrationAction(
+  input: BillingRegistrationInput,
+): Promise<BillingRegistrationActionResult> {
   const staff = await requireBillingAccess();
-  const month = String(formData.get("month") ?? "").trim();
-  const clientId = String(formData.get("clientId") ?? "").trim();
   const supabase = await createSupabaseServerClient();
 
-  if (clientId) {
-    const { data: client } = await supabase.from("clients_view").select("id").eq("id", clientId).maybeSingle();
+  if (input.clientId) {
+    const { data: client } = await supabase.from("clients_view").select("id").eq("id", input.clientId).maybeSingle();
     if (!client) {
-      redirect(billingManagementUrl({ month, error: "顧客が見つかりません。" }));
+      return { error: "顧客が見つかりません。" };
     }
   }
 
-  const { fields, error: validationError } = parseOneTimeBillingFormData(formData, clientId, {
-    requireRevenueMonth: true,
-    disallowZeroAmount: true,
-  });
-  if (validationError || !fields) {
-    redirect(billingManagementUrl({ month, error: validationError ?? "入力内容を確認してください。" }));
+  const { data, error: validationError } = validateBillingRegistrationInput(input);
+  if (validationError || !data) {
+    return { error: validationError ?? "入力内容を確認してください。" };
   }
 
-  const result = await createOneTimeBillingRule(supabase, fields, staff.id);
-  redirect(
-    billingManagementUrl(
-      result.error ? { month, error: result.error } : { month, saved: "created" },
-    ),
-  );
+  const result = await executeBillingRegistration(supabase, data, staff.id);
+  if (result.error) {
+    return { error: result.error };
+  }
+  return { error: null, itemCount: result.itemCount };
+}
+
+/**
+ * /management/billing の一覧からスポット請求を直接取消する（既存のcancel_one_time_billing_rule
+ * RPCをそのまま利用。クライアント詳細画面のcancelOneTimeBillingRuleActionと同じRPC・同じ取消モデル）。
+ */
+export async function cancelOneTimeBillingRuleFromManagementAction(formData: FormData) {
+  await requireBillingAccess();
+  const month = String(formData.get("month") ?? "").trim();
+  const ruleId = String(formData.get("ruleId") ?? "").trim();
+  const reason = String(formData.get("cancelReason") ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+
+  if (!reason) {
+    redirect(billingManagementUrl({ month, error: "取消理由を入力してください" }));
+  }
+
+  const { error } = await supabase.rpc("cancel_one_time_billing_rule", {
+    p_billing_rule_id: ruleId,
+    p_reason: reason,
+  });
+
+  redirect(billingManagementUrl(error ? { month, error: error.message } : { month, saved: "cancelled" }));
 }
