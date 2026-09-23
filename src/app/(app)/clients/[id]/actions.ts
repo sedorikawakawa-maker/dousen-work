@@ -397,9 +397,13 @@ export async function createRecurringBillingRuleAction(formData: FormData) {
     redirect(billingUrl(clientId, { error: "顧客が見つかりません。" }));
   }
 
+  const invoiceTitle = String(formData.get("invoiceTitle") ?? "").trim();
+  if (!invoiceTitle) {
+    redirect(billingUrl(clientId, { error: "件名を入力してください。" }));
+  }
   const subject = String(formData.get("subject") ?? "").trim();
   if (!subject) {
-    redirect(billingUrl(clientId, { error: "件名を入力してください。" }));
+    redirect(billingUrl(clientId, { error: "摘要を入力してください。" }));
   }
   const quantity = Number(formData.get("quantity") ?? "1");
   if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -427,6 +431,7 @@ export async function createRecurringBillingRuleAction(formData: FormData) {
     supabase,
     {
       clientId,
+      invoiceTitle,
       subject,
       description: emptyToNull(formData.get("description")),
       quantity,
@@ -439,7 +444,12 @@ export async function createRecurringBillingRuleAction(formData: FormData) {
     staff.id,
   );
 
-  redirect(billingUrl(clientId, result.error ? { error: result.error } : { saved: "1" }));
+  redirect(
+    billingUrl(
+      clientId,
+      result.error ? { error: result.error } : result.warning ? { saved: "1", error: result.warning } : { saved: "1" },
+    ),
+  );
 }
 
 /**

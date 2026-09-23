@@ -54,6 +54,7 @@ export async function listRecurringBillingRulesForClient(supabase: TypedClient, 
 
 export interface OneTimeBillingRuleRow {
   id: string;
+  invoice_title: string | null;
   subject: string;
   description: string | null;
   quantity: number;
@@ -101,6 +102,7 @@ export async function listOneTimeBillingRulesForClient(
 
   return rules.map((r) => ({
     id: r.id,
+    invoice_title: r.invoice_title,
     subject: r.subject,
     description: r.description,
     quantity: r.quantity,
@@ -126,7 +128,7 @@ export interface UpcomingInvoiceItemRow {
   tax_excluded_amount: number;
   amount_override: number | null;
   notes: string | null;
-  invoices: { status: string } | null;
+  invoices: { status: string; invoice_title: string | null } | null;
 }
 
 /** 今月以降（過去分は除く）の生成済みinvoice_itemsの簡易一覧。取消済みは含めない。 */
@@ -139,7 +141,7 @@ export async function listUpcomingInvoiceItemsForClient(
   const { data, error } = await supabase
     .from("invoice_items")
     .select(
-      "id, billing_month, revenue_month, subject, description, quantity, unit_price_ex_tax, tax_excluded_amount, amount_override, notes, invoices(status)",
+      "id, billing_month, revenue_month, subject, description, quantity, unit_price_ex_tax, tax_excluded_amount, amount_override, notes, invoices(status, invoice_title)",
     )
     .eq("client_id", clientId)
     .is("cancelled_at", null)
@@ -171,6 +173,8 @@ export interface ManagementInvoiceRow {
   client_id: string;
   clientCode: string;
   clientCompanyName: string;
+  /** 請求書全体の件名。摘要(items[].subject)とは別概念。既存データはnull（「件名未設定」表示用）。 */
+  invoiceTitle: string | null;
   billing_month: string;
   status: "planned" | "prepared" | "sent";
   billing_company_name_snapshot: string | null;
@@ -219,6 +223,7 @@ export async function listInvoicesForMonth(
       client_id: r.client_id,
       clientCode: clientById.get(r.client_id)?.client_code ?? "—",
       clientCompanyName: clientById.get(r.client_id)?.company_name ?? "不明な顧客",
+      invoiceTitle: r.invoice_title,
       billing_month: r.billing_month,
       status: r.status,
       billing_company_name_snapshot: r.billing_company_name_snapshot,
@@ -279,6 +284,9 @@ export const BILLING_ITEM_CATEGORY_LABELS: Record<BillingItemCategory, string> =
 export interface BillingExportRow {
   clientCode: string;
   clientCompanyName: string;
+  /** 請求書全体の件名。摘要(subject)とは別概念。未設定はnull。 */
+  invoiceTitle: string | null;
+  /** 摘要（明細名）。billing_rules/invoice_items.subjectそのもの。 */
   subject: string;
   billingMonth: string;
   revenueMonth: string;
@@ -301,6 +309,7 @@ export function buildBillingExportRows(invoices: ManagementInvoiceRow[]): Billin
       rows.push({
         clientCode: invoice.clientCode,
         clientCompanyName: invoice.clientCompanyName,
+        invoiceTitle: invoice.invoiceTitle,
         subject: item.subject,
         billingMonth: item.billing_month,
         revenueMonth: item.revenue_month,

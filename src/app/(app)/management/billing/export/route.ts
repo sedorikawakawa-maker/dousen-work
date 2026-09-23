@@ -48,7 +48,8 @@ export async function GET(request: NextRequest) {
   const header = [
     "顧客コード",
     "顧客名",
-    "請求内容",
+    "件名",
+    "摘要",
     "請求月",
     "売上月",
     "種別",
@@ -64,6 +65,7 @@ export async function GET(request: NextRequest) {
       [
         row.clientCode,
         row.clientCompanyName,
+        row.invoiceTitle ?? "",
         row.subject,
         formatMonthLabel(row.billingMonth),
         formatMonthLabel(row.revenueMonth),

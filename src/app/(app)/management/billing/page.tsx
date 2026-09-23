@@ -263,6 +263,9 @@ export default async function BillingManagementPage({
                         {INVOICE_STATUS_LABELS[invoice.status]}
                       </span>
                     </div>
+                    <p className="mt-0.5 text-sm text-neutral-700">
+                      件名: {invoice.invoiceTitle ?? <span className="text-neutral-400">（件名未設定）</span>}
+                    </p>
                     <p className="mt-0.5 text-xs text-neutral-500">
                       請求先: {invoice.billing_company_name_snapshot ?? "—"}
                       {invoice.billing_contact_name_snapshot ? ` ${invoice.billing_contact_name_snapshot}様` : ""}

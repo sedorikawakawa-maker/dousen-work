@@ -58,6 +58,7 @@ export function BillingRegistrationForm({
   const [kind, setKind] = useState<"spot" | "recurring">("spot");
   const [clientQuery, setClientQuery] = useState("");
   const [clientId, setClientId] = useState("");
+  const [invoiceTitle, setInvoiceTitle] = useState("");
   const [billingMonth, setBillingMonth] = useState(defaultMonth);
   const [revenueMonth, setRevenueMonth] = useState(defaultMonth);
   const [validFrom, setValidFrom] = useState(defaultMonth);
@@ -65,6 +66,7 @@ export function BillingRegistrationForm({
   const [items, setItems] = useState<LineItemState[]>([newLineItem()]);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [, startTransition] = useTransition();
 
@@ -92,6 +94,7 @@ export function BillingRegistrationForm({
     setKind("spot");
     setClientId("");
     setClientQuery("");
+    setInvoiceTitle("");
     setBillingMonth(defaultMonth);
     setRevenueMonth(defaultMonth);
     setValidFrom(defaultMonth);
@@ -103,12 +106,14 @@ export function BillingRegistrationForm({
     e.preventDefault();
     if (isSubmitting) return;
     setError(null);
+    setWarningMessage(null);
     setIsSubmitting(true);
 
     try {
       const result = await createBillingRegistrationAction({
         kind,
         clientId,
+        invoiceTitle: invoiceTitle.trim(),
         items: items.map((it) => ({
           subject: it.subject.trim(),
           description: it.description.trim() ? it.description.trim() : null,
@@ -127,6 +132,7 @@ export function BillingRegistrationForm({
       }
 
       setSuccessMessage(kind === "spot" ? "スポット請求を登録しました。" : "定期請求を登録しました。");
+      if (result.warning) setWarningMessage(result.warning);
       resetForm();
       setIsOpen(false);
       startTransition(() => {
@@ -141,6 +147,9 @@ export function BillingRegistrationForm({
     <div className="rounded-2xl border border-neutral-200 bg-white p-4 sm:p-5">
       {successMessage ? (
         <p className="mb-3 rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">{successMessage}</p>
+      ) : null}
+      {warningMessage ? (
+        <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">{warningMessage}</p>
       ) : null}
 
       {!isOpen ? (
@@ -218,6 +227,19 @@ export function BillingRegistrationForm({
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="text-sm font-medium text-neutral-700">
+            件名（請求全体で1つ）
+            <input
+              type="text"
+              value={invoiceTitle}
+              onChange={(e) => setInvoiceTitle(e.target.value)}
+              required
+              disabled={isSubmitting}
+              placeholder="例: 9月分 SNS運用・動画制作費"
+              className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base disabled:bg-neutral-50"
+            />
           </label>
 
           {kind === "spot" ? (

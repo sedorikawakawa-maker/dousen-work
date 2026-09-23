@@ -5,6 +5,7 @@ function baseSpotInput(overrides: Partial<BillingRegistrationInput> = {}): Billi
   return {
     kind: "spot",
     clientId: "client-1",
+    invoiceTitle: "9月分 SNS運用・動画制作費",
     items: [{ subject: "Instagram運用", description: null, quantity: 1, unitPriceExTax: 30000 }],
     billingMonth: "2026-09",
     revenueMonth: "2026-09",
@@ -16,6 +17,7 @@ function baseRecurringInput(overrides: Partial<BillingRegistrationInput> = {}): 
   return {
     kind: "recurring",
     clientId: "client-1",
+    invoiceTitle: "月次SNS運用費",
     items: [{ subject: "Instagram運用", description: null, quantity: 1, unitPriceExTax: 30000 }],
     validFrom: "2026-10",
     validTo: null,
@@ -49,6 +51,17 @@ describe("validateBillingRegistrationInput（/management/billing 複数摘要登
     const { data, error } = validateBillingRegistrationInput(baseRecurringInput({ validTo: "2027-03" }));
     expect(error).toBeNull();
     expect(data?.validToIso).toBe("2027-03-01");
+  });
+
+  it("件名未入力は拒否", () => {
+    const { data, error } = validateBillingRegistrationInput(baseSpotInput({ invoiceTitle: "" }));
+    expect(data).toBeNull();
+    expect(error).toMatch(/件名/);
+  });
+
+  it("件名が空白のみの場合も拒否", () => {
+    const { error } = validateBillingRegistrationInput(baseSpotInput({ invoiceTitle: "   " }));
+    expect(error).toMatch(/件名/);
   });
 
   it("顧客未選択は拒否", () => {

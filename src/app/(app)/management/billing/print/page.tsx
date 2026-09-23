@@ -79,7 +79,7 @@ export default async function BillingPrintPage({
         <thead>
           <tr className="border-b border-neutral-400 text-left">
             <th className="py-1 pr-3">顧客名</th>
-            <th className="py-1 pr-3">内容</th>
+            <th className="py-1 pr-3">件名 / 摘要</th>
             <th className="py-1 pr-3">種別</th>
             <th className="py-1 pr-3">売上月</th>
             <th className="py-1 pr-3 text-right">税抜金額</th>
@@ -90,7 +90,10 @@ export default async function BillingPrintPage({
           {rows.map((row, i) => (
             <tr key={i} className="border-b border-neutral-200">
               <td className="py-1 pr-3">{row.clientCompanyName}</td>
-              <td className="py-1 pr-3">{row.subject}</td>
+              <td className="py-1 pr-3">
+                <div className="text-xs text-neutral-500">{row.invoiceTitle ?? "（件名未設定）"}</div>
+                <div>{row.subject}</div>
+              </td>
               <td className="py-1 pr-3">{BILLING_ITEM_CATEGORY_LABELS[row.category]}</td>
               <td className="py-1 pr-3">{formatMonthLabel(row.revenueMonth)}</td>
               <td className="py-1 pr-3 text-right tabular-nums">{yen(row.amount)}</td>

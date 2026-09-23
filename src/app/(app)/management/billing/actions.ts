@@ -70,6 +70,7 @@ export async function ensureBillingRollingWindowAction(): Promise<{ rulesProcess
 export interface BillingRegistrationActionResult {
   error: string | null;
   itemCount?: number;
+  warning?: string;
 }
 
 /**
@@ -102,7 +103,7 @@ export async function createBillingRegistrationAction(
   if (result.error) {
     return { error: result.error };
   }
-  return { error: null, itemCount: result.itemCount };
+  return { error: null, itemCount: result.itemCount, warning: result.warning };
 }
 
 /**

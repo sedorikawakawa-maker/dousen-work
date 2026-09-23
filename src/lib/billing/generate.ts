@@ -69,10 +69,24 @@ async function getClientBillingContext(supabase: TypedClient, clientId: string) 
 /**
  * client_id + billing_monthで1件のinvoiceを取得し、無ければclient_billing_profilesの
  * 請求先情報をスナップショットして新規作成する（find-or-create、resolveClientFolder等と同じ思想）。
+ *
+ * invoice_title（件名）は請求書1件につき1つのため、同じ請求月へ複数回・複数のruleから
+ * 摘要が追加され得ることを踏まえて次のルールで扱う（invoiceの件名を黙って上書きしない）:
+ *   - invoiceを新規作成する場合: 渡された件名をそのまま設定する。
+ *   - 既存invoiceの件名が未設定(null)の場合: 渡された件名で補完する（上書きではなく穴埋め）。
+ *   - 既存invoiceに件名が設定済みで、渡された件名と異なる場合: 変更せず「競合」を呼び出し元へ返す
+ *     （呼び出し元はこれを見て明細生成をスキップし、分かるメッセージを返す）。
+ *   - 渡された件名が同じ、またはnullの場合: 競合なし。
  */
 interface InvoiceRef {
   id: string;
   status: Database["public"]["Tables"]["invoices"]["Row"]["status"];
+}
+
+interface GetOrCreateInvoiceResult {
+  invoice: InvoiceRef;
+  titleConflict: boolean;
+  conflictingTitle?: string | null;
 }
 
 async function getOrCreateInvoice(
@@ -81,20 +95,39 @@ async function getOrCreateInvoice(
   billingMonth: string,
   profile: ClientBillingProfileRow | null,
   companyNameFallback: string,
-): Promise<InvoiceRef> {
+  invoiceTitle: string | null,
+): Promise<GetOrCreateInvoiceResult> {
   const { data: existing } = await supabase
     .from("invoices")
-    .select("id, status")
+    .select("id, status, invoice_title")
     .eq("client_id", clientId)
     .eq("billing_month", billingMonth)
     .maybeSingle();
-  if (existing) return existing;
+
+  if (existing) {
+    if (invoiceTitle && existing.invoice_title && existing.invoice_title !== invoiceTitle) {
+      return {
+        invoice: { id: existing.id, status: existing.status },
+        titleConflict: true,
+        conflictingTitle: existing.invoice_title,
+      };
+    }
+    if (invoiceTitle && !existing.invoice_title) {
+      const { error: fillError } = await supabase
+        .from("invoices")
+        .update({ invoice_title: invoiceTitle })
+        .eq("id", existing.id);
+      if (fillError) throw fillError;
+    }
+    return { invoice: { id: existing.id, status: existing.status }, titleConflict: false };
+  }
 
   const { data: created, error } = await supabase
     .from("invoices")
     .insert({
       client_id: clientId,
       billing_month: billingMonth,
+      invoice_title: invoiceTitle,
       billing_company_name_snapshot: profile?.billing_company_name ?? companyNameFallback,
       billing_contact_name_snapshot: profile?.billing_contact_name ?? null,
       billing_email_snapshot: profile?.billing_email ?? null,
@@ -113,15 +146,24 @@ async function getOrCreateInvoice(
       // 競合で他の呼び出しが先に作成した場合、それを再取得して使う。
       const { data: raceExisting } = await supabase
         .from("invoices")
-        .select("id, status")
+        .select("id, status, invoice_title")
         .eq("client_id", clientId)
         .eq("billing_month", billingMonth)
         .single();
-      if (raceExisting) return raceExisting;
+      if (raceExisting) {
+        if (invoiceTitle && raceExisting.invoice_title && raceExisting.invoice_title !== invoiceTitle) {
+          return {
+            invoice: { id: raceExisting.id, status: raceExisting.status },
+            titleConflict: true,
+            conflictingTitle: raceExisting.invoice_title,
+          };
+        }
+        return { invoice: { id: raceExisting.id, status: raceExisting.status }, titleConflict: false };
+      }
     }
     throw error;
   }
-  return created;
+  return { invoice: created, titleConflict: false };
 }
 
 async function insertInvoiceItemIfMissing(
@@ -184,19 +226,27 @@ async function insertInvoiceItemIfMissing(
  * is_active=false、client.invoice_required=false、valid_from/valid_to/contract_end_dateの
  * 範囲外の月はスキップする。
  */
+export interface RecurringGenerationSummary {
+  insertedCount: number;
+  /** 件名の競合により明細生成をスキップした月（'YYYY-MM-01'）の一覧。rule自体は保存されたまま。 */
+  titleConflictMonths: string[];
+}
+
 export async function generateInvoiceItemsForRecurringRule(
   supabase: TypedClient,
   rule: BillingRuleRow,
-): Promise<number> {
-  if (rule.billing_type !== "recurring" || !rule.is_active || !rule.valid_from) return 0;
+): Promise<RecurringGenerationSummary> {
+  const empty: RecurringGenerationSummary = { insertedCount: 0, titleConflictMonths: [] };
+  if (rule.billing_type !== "recurring" || !rule.is_active || !rule.valid_from) return empty;
 
   const { profile, clientRow } = await getClientBillingContext(supabase, rule.client_id);
-  if (!clientRow) return 0;
-  if (profile && profile.invoice_required === false) return 0;
+  if (!clientRow) return empty;
+  if (profile && profile.invoice_required === false) return empty;
 
   const contractEndMonthIso = clientRow.contract_end_date ? truncateToMonthIso(clientRow.contract_end_date) : null;
 
   let insertedCount = 0;
+  const titleConflictMonths: string[] = [];
   for (const { year, month0 } of rollingWindowMonths()) {
     const billingMonth = monthToIso(year, month0);
     if (billingMonth < rule.valid_from) continue;
@@ -204,7 +254,18 @@ export async function generateInvoiceItemsForRecurringRule(
     if (contractEndMonthIso && billingMonth > contractEndMonthIso) continue;
 
     const revenueMonth = addMonthsIso(billingMonth, rule.revenue_month_offset_months);
-    const invoice = await getOrCreateInvoice(supabase, rule.client_id, billingMonth, profile, clientRow.company_name);
+    const { invoice, titleConflict } = await getOrCreateInvoice(
+      supabase,
+      rule.client_id,
+      billingMonth,
+      profile,
+      clientRow.company_name,
+      rule.invoice_title,
+    );
+    if (titleConflict) {
+      titleConflictMonths.push(billingMonth);
+      continue;
+    }
     const inserted = await insertInvoiceItemIfMissing(supabase, {
       invoice,
       clientId: rule.client_id,
@@ -219,7 +280,7 @@ export async function generateInvoiceItemsForRecurringRule(
     });
     if (inserted) insertedCount += 1;
   }
-  return insertedCount;
+  return { insertedCount, titleConflictMonths };
 }
 
 /**
@@ -242,14 +303,16 @@ export async function ensureBillingRollingWindowForAllClients(
 
   let itemsGenerated = 0;
   for (const rule of rules) {
-    itemsGenerated += await generateInvoiceItemsForRecurringRule(supabase, rule);
+    const summary = await generateInvoiceItemsForRecurringRule(supabase, rule);
+    itemsGenerated += summary.insertedCount;
   }
   return { rulesProcessed: rules.length, itemsGenerated };
 }
 
 export interface OneTimeGenerationResult {
   skipped: boolean;
-  reason?: "invoice_required_false" | "client_not_found" | "after_contract_end" | "invoice_locked";
+  reason?: "invoice_required_false" | "client_not_found" | "after_contract_end" | "invoice_locked" | "title_conflict";
+  conflictingTitle?: string | null;
 }
 
 /**
@@ -272,13 +335,17 @@ export async function generateInvoiceItemForOneTimeRule(
     return { skipped: true, reason: "after_contract_end" };
   }
 
-  const invoice = await getOrCreateInvoice(
+  const { invoice, titleConflict, conflictingTitle } = await getOrCreateInvoice(
     supabase,
     rule.client_id,
     rule.one_time_billing_month,
     profile,
     clientRow.company_name,
+    rule.invoice_title,
   );
+  if (titleConflict) {
+    return { skipped: true, reason: "title_conflict", conflictingTitle };
+  }
   if (invoice.status !== "planned") {
     return { skipped: true, reason: "invoice_locked" };
   }
@@ -338,6 +405,8 @@ export interface RecurringRuleInput {
   quantity: number;
   unitPriceExTax: number;
   notes: string | null;
+  /** 省略時は旧ruleの件名をそのまま引き継ぐ（「何も指定しなければ現在の件名を継承」）。 */
+  invoiceTitle?: string | null;
 }
 
 /**
@@ -373,6 +442,7 @@ export async function splitAndReplaceRecurringBillingRule(
       quantity: newValues.quantity,
       unit_price_ex_tax: newValues.unitPriceExTax,
       notes: newValues.notes,
+      invoice_title: newValues.invoiceTitle !== undefined ? newValues.invoiceTitle : oldRule.invoice_title,
       valid_from: changeFromMonthIso,
       valid_to: null,
       one_time_billing_month: null,
@@ -447,6 +517,8 @@ function emptyToNull(value: FormDataEntryValue | null): string | null {
 
 export interface OneTimeBillingFormFields {
   clientId: string;
+  /** 請求書全体の件名（invoices.invoice_title / billing_rules.invoice_title）。摘要(subject)とは別概念。 */
+  invoiceTitle: string;
   subject: string;
   description: string | null;
   quantity: number;
@@ -479,9 +551,14 @@ export function parseOneTimeBillingFormData(
     return { fields: null, error: "顧客を選択してください。" };
   }
 
+  const invoiceTitle = String(formData.get("invoiceTitle") ?? "").trim();
+  if (!invoiceTitle) {
+    return { fields: null, error: "件名を入力してください。" };
+  }
+
   const subject = String(formData.get("subject") ?? "").trim();
   if (!subject) {
-    return { fields: null, error: "件名を入力してください。" };
+    return { fields: null, error: "摘要を入力してください。" };
   }
 
   const quantity = Number(formData.get("quantity") ?? "1");
@@ -516,6 +593,7 @@ export function parseOneTimeBillingFormData(
   return {
     fields: {
       clientId,
+      invoiceTitle,
       subject,
       description: emptyToNull(formData.get("description") as string | null),
       quantity,
@@ -536,6 +614,12 @@ export interface CreateOneTimeBillingRuleResult {
 /**
  * スポット請求（one_time billing_rule）の新規作成＋即時のinvoice/invoice_item生成。
  * INSERT自体はこの関数だけが行う（呼び出し元でbilling_rulesへの重複INSERT実装をしない）。
+ *
+ * 件名(invoice_title)が同じ請求月の既存invoiceと競合する場合（既に別の件名が設定済み）は、
+ * 「登録を止めてエラーを返す」仕様（黙って上書きしない）のため、直前に作成したrule自体を
+ * 既存のcancel_one_time_billing_rule RPCで自動取消してから失敗として返す
+ * （ruleId無しのerrorとして返すことで、呼び出し元executeBillingRegistrationの既存の
+ * 「ruleIdが無ければ失敗」判定にそのまま乗せる。新しい分岐を追加しない）。
  */
 export async function createOneTimeBillingRule(
   supabase: TypedClient,
@@ -549,6 +633,7 @@ export async function createOneTimeBillingRule(
       billing_type: "one_time",
       subject: input.subject,
       description: input.description,
+      invoice_title: input.invoiceTitle,
       quantity: input.quantity,
       unit_price_ex_tax: input.unitPriceExTax,
       notes: input.notes,
@@ -569,6 +654,15 @@ export async function createOneTimeBillingRule(
 
   const result = await generateInvoiceItemForOneTimeRule(supabase, newRule);
   if (result.skipped) {
+    if (result.reason === "title_conflict") {
+      await supabase.rpc("cancel_one_time_billing_rule", {
+        p_billing_rule_id: newRule.id,
+        p_reason: "請求月の件名競合のため自動取消",
+      });
+      return {
+        error: `この請求月には既に別の件名（${result.conflictingTitle}）が設定されているため登録できません。`,
+      };
+    }
     const reasonMessage =
       result.reason === "invoice_required_false"
         ? "この顧客は請求書送付不要のため、明細は生成されませんでした（設定は保存済みです）。"
@@ -590,6 +684,9 @@ export async function createOneTimeBillingRule(
 
 export interface RecurringBillingFormFields {
   clientId: string;
+  /** 請求書全体の件名（invoices.invoice_title / billing_rules.invoice_title）。摘要(subject)とは別概念。
+   * 将来ローリング窓で生成されるinvoiceへも、このruleに保存された値がそのまま引き継がれる。 */
+  invoiceTitle: string;
   subject: string;
   description: string | null;
   quantity: number;
@@ -603,12 +700,18 @@ export interface RecurringBillingFormFields {
 export interface CreateRecurringBillingRuleResult {
   error: string | null;
   ruleId?: string;
+  /** ruleは保存されたが、一部の月で件名競合により明細生成がスキップされた場合の警告（致命的ではない）。 */
+  warning?: string;
 }
 
 /**
  * 定期請求（recurring billing_rule）の新規作成＋現在月+2か月ローリング窓分の即時生成。
  * INSERT自体はこの関数だけが行う（既存clients/[id]のcreateRecurringBillingRuleActionも
  * この関数を呼ぶだけにし、重複INSERT実装を持たない）。
+ *
+ * 件名競合はスポットと異なりrule自体を取消さない（1つのruleが複数月のinvoiceに関わるため、
+ * ある月だけ競合してもrule全体を無効化するのは過剰）。競合した月は明細生成のみスキップし、
+ * 警告としてwarningへ返す（既存の他のskip理由と同じ「ruleは保存済み」の扱い）。
  */
 export async function createRecurringBillingRule(
   supabase: TypedClient,
@@ -622,6 +725,7 @@ export async function createRecurringBillingRule(
       billing_type: "recurring",
       subject: input.subject,
       description: input.description,
+      invoice_title: input.invoiceTitle,
       quantity: input.quantity,
       unit_price_ex_tax: input.unitPriceExTax,
       notes: input.notes,
@@ -640,9 +744,13 @@ export async function createRecurringBillingRule(
     return { error: error?.message ?? "登録に失敗しました" };
   }
 
-  await generateInvoiceItemsForRecurringRule(supabase, newRule);
+  const summary = await generateInvoiceItemsForRecurringRule(supabase, newRule);
+  const warning =
+    summary.titleConflictMonths.length > 0
+      ? `一部の月（${summary.titleConflictMonths.map((m) => formatMonthLabel(m)).join("、")}）には既に別の件名が設定されているため、その月の明細は生成されませんでした（設定は保存済みです）。`
+      : undefined;
 
-  return { error: null, ruleId: newRule.id };
+  return { error: null, ruleId: newRule.id, warning };
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +775,8 @@ export type BillingRegistrationKind = "spot" | "recurring";
 export interface BillingRegistrationInput {
   kind: BillingRegistrationKind;
   clientId: string;
+  /** 請求全体で1つの件名（invoices.invoice_title / billing_rules.invoice_title）。摘要とは別概念。 */
+  invoiceTitle: string;
   items: BillingLineItemInput[];
   /** kind==='spot'の場合必須（'YYYY-MM'）。 */
   billingMonth?: string | null;
@@ -679,6 +789,7 @@ export interface BillingRegistrationInput {
 interface ValidatedBillingRegistration {
   kind: BillingRegistrationKind;
   clientId: string;
+  invoiceTitle: string;
   items: BillingLineItemInput[];
   billingMonthIso: string;
   revenueMonthIso: string;
@@ -696,6 +807,10 @@ export function validateBillingRegistrationInput(
 ): { data: ValidatedBillingRegistration | null; error: string | null } {
   if (!input.clientId) {
     return { data: null, error: "顧客を選択してください。" };
+  }
+  const invoiceTitle = (input.invoiceTitle ?? "").trim();
+  if (!invoiceTitle) {
+    return { data: null, error: "件名を入力してください。" };
   }
   if (!input.items || input.items.length === 0) {
     return { data: null, error: "摘要を1件以上入力してください。" };
@@ -731,6 +846,7 @@ export function validateBillingRegistrationInput(
       data: {
         kind: "spot",
         clientId: input.clientId,
+        invoiceTitle,
         items: input.items,
         billingMonthIso,
         revenueMonthIso,
@@ -758,6 +874,7 @@ export function validateBillingRegistrationInput(
     data: {
       kind: "recurring",
       clientId: input.clientId,
+      invoiceTitle,
       items: input.items,
       billingMonthIso: "",
       revenueMonthIso: "",
@@ -789,14 +906,18 @@ export interface BillingRegistrationResult {
   error: string | null;
   createdRuleIds: string[];
   itemCount: number;
+  /** 致命的ではないが伝えるべき警告（例: 定期の一部月で件名競合により明細生成をスキップ）。 */
+  warning?: string;
 }
 
 /**
  * バリデーション済みの複数摘要登録を実行する。摘要ごとにcreateOneTimeBillingRule /
  * createRecurringBillingRuleを順に呼び出す（同じ請求月のスポットは既存のfind-or-create
  * invoiceにより自動的に同じinvoiceへまとまる）。
- * 途中の摘要でbilling_rule自体のINSERTが失敗した場合のみ、それまでの成功分を取消して
- * エラーを返す（invoice_required=false等による「明細生成のみskip」は失敗扱いにしない）。
+ * 途中の摘要でbilling_rule自体のINSERTが失敗した場合、または件名競合によりスポットの
+ * 明細生成が拒否された場合（createOneTimeBillingRule側で該当ruleは自動取消済み）は、
+ * それまでの成功分も取消してエラーを返す（invoice_required=false等の従来からある
+ * 「明細生成のみskip」は引き続き失敗扱いにしない）。
  */
 export async function executeBillingRegistration(
   supabase: TypedClient,
@@ -804,6 +925,7 @@ export async function executeBillingRegistration(
   createdByStaffId: string,
 ): Promise<BillingRegistrationResult> {
   const createdRuleIds: string[] = [];
+  let warning: string | undefined;
 
   for (const item of data.items) {
     if (data.kind === "spot") {
@@ -811,6 +933,7 @@ export async function executeBillingRegistration(
         supabase,
         {
           clientId: data.clientId,
+          invoiceTitle: data.invoiceTitle,
           subject: item.subject,
           description: item.description,
           quantity: item.quantity,
@@ -832,6 +955,7 @@ export async function executeBillingRegistration(
         supabase,
         {
           clientId: data.clientId,
+          invoiceTitle: data.invoiceTitle,
           subject: item.subject,
           description: item.description,
           quantity: item.quantity,
@@ -845,6 +969,7 @@ export async function executeBillingRegistration(
       );
       if (result.ruleId) {
         createdRuleIds.push(result.ruleId);
+        if (result.warning) warning = result.warning;
       } else {
         await rollbackCreatedRecurringRules(supabase, createdRuleIds);
         return { error: result.error ?? "登録に失敗しました", createdRuleIds: [], itemCount: 0 };
@@ -852,5 +977,5 @@ export async function executeBillingRegistration(
     }
   }
 
-  return { error: null, createdRuleIds, itemCount: data.items.length };
+  return { error: null, createdRuleIds, itemCount: data.items.length, warning };
 }

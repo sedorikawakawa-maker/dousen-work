@@ -607,6 +607,9 @@ export default async function ClientDetailPage({
                     <li key={rule.id} className="rounded-md border border-neutral-200 px-3 py-2.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
+                          <p className="text-xs text-neutral-400">
+                            件名: {rule.invoice_title ?? "（件名未設定）"}
+                          </p>
                           <span className="font-medium">{rule.subject}</span>
                           {rule.description ? (
                             <span className="ml-2 text-xs text-neutral-500">{rule.description}</span>
@@ -652,7 +655,7 @@ export default async function ClientDetailPage({
                                 />
                               </label>
                               <label className="text-xs font-medium text-neutral-700">
-                                件名
+                                摘要
                                 <input
                                   name="subject"
                                   type="text"
@@ -662,7 +665,7 @@ export default async function ClientDetailPage({
                                 />
                               </label>
                               <label className="text-xs font-medium text-neutral-700">
-                                摘要
+                                説明（任意）
                                 <input
                                   name="description"
                                   type="text"
@@ -670,6 +673,9 @@ export default async function ClientDetailPage({
                                   className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm"
                                 />
                               </label>
+                              <p className="text-[11px] text-neutral-500">
+                                件名は現在の設定「{rule.invoice_title ?? "（件名未設定）"}」を引き継ぎます。
+                              </p>
                               <div className="grid grid-cols-2 gap-2">
                                 <label className="text-xs font-medium text-neutral-700">
                                   数量
@@ -744,7 +750,17 @@ export default async function ClientDetailPage({
                 >
                   <input type="hidden" name="clientId" value={id} />
                   <label className="text-sm font-medium text-neutral-700">
-                    件名
+                    件名（請求全体で1つ）
+                    <input
+                      name="invoiceTitle"
+                      type="text"
+                      required
+                      placeholder="例: 月次SNS運用費"
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-neutral-700">
+                    摘要
                     <input
                       name="subject"
                       type="text"
@@ -753,7 +769,7 @@ export default async function ClientDetailPage({
                     />
                   </label>
                   <label className="text-sm font-medium text-neutral-700">
-                    摘要（任意）
+                    説明（任意）
                     <input
                       name="description"
                       type="text"
@@ -845,6 +861,16 @@ export default async function ClientDetailPage({
                   className="mt-3 flex flex-col gap-3 rounded-md border border-neutral-200 p-3"
                 >
                   <input type="hidden" name="clientId" value={id} />
+                  <label className="text-sm font-medium text-neutral-700">
+                    件名（請求全体で1つ）
+                    <input
+                      name="invoiceTitle"
+                      type="text"
+                      required
+                      placeholder="例: 9月分 SNS運用・動画制作費"
+                      className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                    />
+                  </label>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="text-sm font-medium text-neutral-700">
                       請求月
@@ -865,7 +891,7 @@ export default async function ClientDetailPage({
                     </label>
                   </div>
                   <label className="text-sm font-medium text-neutral-700">
-                    件名
+                    摘要
                     <input
                       name="subject"
                       type="text"
@@ -874,7 +900,7 @@ export default async function ClientDetailPage({
                     />
                   </label>
                   <label className="text-sm font-medium text-neutral-700">
-                    摘要（任意）
+                    説明（任意）
                     <input
                       name="description"
                       type="text"
@@ -935,6 +961,9 @@ export default async function ClientDetailPage({
                     <li key={rule.id} className="rounded-md border border-neutral-200 px-3 py-2.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
+                          <p className="text-xs text-neutral-400">
+                            件名: {rule.invoice_title ?? "（件名未設定）"}
+                          </p>
                           <span className={`font-medium ${isCancelled ? "text-neutral-400 line-through" : ""}`}>
                             {rule.subject}
                           </span>
@@ -1013,7 +1042,12 @@ export default async function ClientDetailPage({
                 <ul className="flex flex-col gap-3 text-sm">
                   {groupInvoiceItemsByMonth(upcomingInvoiceItems).map(([month, items]) => (
                     <li key={month}>
-                      <p className="mb-1 text-xs font-semibold text-neutral-500">{formatMonthLabel(month)}</p>
+                      <p className="mb-1 text-xs font-semibold text-neutral-500">
+                        {formatMonthLabel(month)}
+                        <span className="ml-2 font-normal text-neutral-400">
+                          件名: {items[0]?.invoices?.invoice_title ?? "（件名未設定）"}
+                        </span>
+                      </p>
                       <ul className="flex flex-col gap-1">
                         {items.map((item) => {
                           const amount = item.amount_override ?? item.tax_excluded_amount;

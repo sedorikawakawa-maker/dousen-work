@@ -818,10 +818,17 @@ export interface Database {
           cancelled_at: string | null;
           cancelled_by_staff_id: string | null;
           cancel_reason: string | null;
+          invoice_title: string | null;
         };
         Insert: Omit<
           Database["public"]["Tables"]["billing_rules"]["Row"],
-          "id" | "created_at" | "updated_at" | "cancelled_at" | "cancelled_by_staff_id" | "cancel_reason"
+          | "id"
+          | "created_at"
+          | "updated_at"
+          | "cancelled_at"
+          | "cancelled_by_staff_id"
+          | "cancel_reason"
+          | "invoice_title"
         > & {
           id?: string;
           created_at?: string;
@@ -829,6 +836,7 @@ export interface Database {
           cancelled_at?: string | null;
           cancelled_by_staff_id?: string | null;
           cancel_reason?: string | null;
+          invoice_title?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["billing_rules"]["Insert"]>;
         Relationships: [];
@@ -850,15 +858,17 @@ export interface Database {
           notes: string | null;
           created_at: string;
           updated_at: string;
+          invoice_title: string | null;
         };
         Insert: Omit<
           Database["public"]["Tables"]["invoices"]["Row"],
-          "id" | "status" | "created_at" | "updated_at"
+          "id" | "status" | "created_at" | "updated_at" | "invoice_title"
         > & {
           id?: string;
           status?: InvoiceStatus;
           created_at?: string;
           updated_at?: string;
+          invoice_title?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["invoices"]["Insert"]>;
         Relationships: [];
