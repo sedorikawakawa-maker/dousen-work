@@ -6,6 +6,7 @@ import type {
   DriveService,
   DriveUploadInput,
   DriveUploadResult,
+  ResolveAccountingDocumentFolderInput,
   ResolveFolderInput,
   ResolveMaterialSubmissionFolderInput,
   ResumableUploadSession,
@@ -215,6 +216,45 @@ export class GoogleDriveService implements DriveService {
         folderHint: input.folderHint,
       });
       return { folderId, folderUrl: `https://drive.google.com/drive/folders/${folderId}` };
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+  }
+
+  /**
+   * 経理書類BOX専用: 顧客に紐付かない {root}/_経理/書類BOX/{yearMonth}/ を解決する。
+   * resolveClientFolder（顧客ID必須）は使わず、findOrCreateFolderを直接3段チェーンする
+   * 最小限の実装（既存の顧客フォルダロジックには一切影響しない）。
+   */
+  async resolveAccountingDocumentFolder(
+    input: ResolveAccountingDocumentFolderInput,
+  ): Promise<DriveFolderRef> {
+    const row = await getDriveIntegrationRow();
+    if (!row || row.status !== "connected" || !row.refresh_token_encrypted) {
+      throw new Error("Google Driveが連携されていません。管理者にご連絡ください。");
+    }
+    if (!row.root_folder_id) {
+      throw new Error("Google Driveの保存先フォルダが設定されていません。管理者にご連絡ください。");
+    }
+
+    const refreshToken = await getDecryptedRefreshToken();
+    if (!refreshToken) {
+      throw new Error("Google Drive連携が無効です。管理者にご連絡ください。");
+    }
+
+    let drive;
+    try {
+      const authClient = await createAuthorizedClient(refreshToken);
+      drive = getDriveClient(authClient);
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+
+    try {
+      const accountingRoot = await findOrCreateFolder(drive, "_経理", row.root_folder_id);
+      const documentBox = await findOrCreateFolder(drive, "書類BOX", accountingRoot.id);
+      const monthFolder = await findOrCreateFolder(drive, input.yearMonth, documentBox.id);
+      return { folderId: monthFolder.id, folderUrl: `https://drive.google.com/drive/folders/${monthFolder.id}` };
     } catch (err) {
       throw new Error(describeGoogleError(err));
     }

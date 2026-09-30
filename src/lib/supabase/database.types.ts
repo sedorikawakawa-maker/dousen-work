@@ -86,6 +86,11 @@ export type BillingType = "recurring" | "one_time";
 
 export type InvoiceStatus = "planned" | "prepared" | "sent";
 
+export type AccountingDocumentType = "receipt" | "invoice_received" | "other";
+export type AccountingDocumentOcrStatus = "pending" | "processing" | "completed" | "failed" | "skipped";
+export type AccountingDocumentStatus = "uploaded" | "confirmed" | "rejected" | "voided";
+export type ExpenseStatus = "confirmed" | "cancelled";
+
 export interface Database {
   public: {
     Tables: {
@@ -900,6 +905,96 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["invoice_items"]["Insert"]>;
         Relationships: [];
       };
+      accounting_documents: {
+        Row: {
+          id: string;
+          document_type: AccountingDocumentType;
+          drive_file_id: string;
+          drive_url: string;
+          file_name: string;
+          mime_type: string;
+          file_size_bytes: number;
+          file_hash: string;
+          uploaded_at: string;
+          uploaded_by_staff_id: string;
+          ocr_status: AccountingDocumentOcrStatus;
+          ocr_raw_result: unknown | null;
+          transaction_date_candidate: string | null;
+          vendor_name_candidate: string | null;
+          amount_candidate: number | null;
+          tax_amount_candidate: number | null;
+          tax_rate_candidate: number | null;
+          invoice_number_candidate: string | null;
+          description_candidate: string | null;
+          due_date_candidate: string | null;
+          payment_method_candidate: string | null;
+          account_category_candidate: string | null;
+          tax_category_candidate: string | null;
+          duplicate_warning: boolean;
+          status: AccountingDocumentStatus;
+          voided_at: string | null;
+          voided_by_staff_id: string | null;
+          void_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["accounting_documents"]["Row"],
+          | "id"
+          | "uploaded_at"
+          | "ocr_status"
+          | "duplicate_warning"
+          | "status"
+          | "created_at"
+          | "updated_at"
+        > & {
+          id?: string;
+          uploaded_at?: string;
+          ocr_status?: AccountingDocumentOcrStatus;
+          duplicate_warning?: boolean;
+          status?: AccountingDocumentStatus;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["accounting_documents"]["Insert"]>;
+        Relationships: [];
+      };
+      expenses: {
+        Row: {
+          id: string;
+          document_id: string | null;
+          transaction_date: string;
+          vendor_name: string;
+          amount: number;
+          tax_amount: number | null;
+          account_category_candidate: string | null;
+          account_category_confirmed: string;
+          tax_category_candidate: string | null;
+          tax_category_confirmed: string | null;
+          payment_method: string | null;
+          description: string | null;
+          status: ExpenseStatus;
+          confirmed_by_staff_id: string;
+          confirmed_at: string;
+          cancelled_at: string | null;
+          cancelled_by_staff_id: string | null;
+          cancel_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["expenses"]["Row"],
+          "id" | "status" | "confirmed_at" | "created_at" | "updated_at"
+        > & {
+          id?: string;
+          status?: ExpenseStatus;
+          confirmed_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["expenses"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       clients_view: {
@@ -1074,6 +1169,16 @@ export interface Database {
           p_reason: string;
         };
         Returns: undefined;
+      };
+      confirm_accounting_document_expenses: {
+        Args: {
+          p_document_id: string | null;
+          p_transaction_date: string;
+          p_vendor_name: string;
+          p_payment_method: string | null;
+          p_items: unknown;
+        };
+        Returns: { expense_ids: string[]; warning: string | null };
       };
       log_credential_password_access: {
         Args: {

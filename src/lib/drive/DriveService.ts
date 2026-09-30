@@ -41,6 +41,11 @@ export interface ResolveFolderInput {
   folderHint: string;
 }
 
+export interface ResolveAccountingDocumentFolderInput {
+  /** 'YYYY-MM'形式の年月フォルダ名（書類のアップロード月で分ける）。 */
+  yearMonth: string;
+}
+
 export interface CreateResumableUploadSessionInput {
   /** アップロード先フォルダID（resolveFolder等で事前に解決済みのもの。複数ファイルでも1回の解決結果を使い回す）。 */
   folderId: string;
@@ -88,6 +93,13 @@ export interface DriveService {
    * フォルダを開くリンクの表示に使う。
    */
   resolveFolder(input: ResolveFolderInput): Promise<DriveFolderRef>;
+  /**
+   * 経理書類BOX専用: 顧客に紐付かない社内共通フォルダ
+   * {root}/_経理/書類BOX/{yearMonth}/ を解決(無ければ作成)する。
+   * resolveFolder/resolveClientFolderは顧客ID必須のため、それらとは別の最小限の
+   * 拡張として追加する（既存の顧客フォルダロジックには一切手を加えない）。
+   */
+  resolveAccountingDocumentFolder(input: ResolveAccountingDocumentFolderInput): Promise<DriveFolderRef>;
   /**
    * 汎用: 指定フォルダへの1ファイル分のresumable upload sessionを発行する。
    * ブラウザがこのsession URLへ直接PUTすることで、動画本体をNetlify Functions
@@ -162,6 +174,17 @@ class MockDriveService implements DriveService {
     return {
       folderId: id,
       folderUrl: `https://drive.google.com/mock-storage/${clientId}/${encodeURIComponent(folderHint)}?id=${id}`,
+    };
+  }
+
+  /** yearMonthから決定的なIDを作る（同じ年月なら毎回同じフォルダに解決される）。 */
+  async resolveAccountingDocumentFolder({
+    yearMonth,
+  }: ResolveAccountingDocumentFolderInput): Promise<DriveFolderRef> {
+    const id = `mock-folder-_accounting-${yearMonth}`;
+    return {
+      folderId: id,
+      folderUrl: `https://drive.google.com/mock-storage/_accounting/書類BOX/${encodeURIComponent(yearMonth)}?id=${id}`,
     };
   }
 

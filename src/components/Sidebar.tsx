@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { canAccessManagementFeatures, canManageStaff } from "@/lib/auth/roles";
+import { canAccessManagementFeatures, canManageStaff, canViewFinance } from "@/lib/auth/roles";
 import type { StaffRole } from "@/lib/supabase/database.types";
 import { useStaffPresence, StaffPresenceRosterView } from "@/components/StaffPresence";
 import type { StaffPresenceRosterItem } from "@/lib/presence/queries";
@@ -49,6 +49,19 @@ function buildNavGroups(role: StaffRole): NavGroup[] {
       ],
     },
   ];
+
+  // 経理: part_timeは利用不可（既存のcanViewFinanceと同じ判定基準）。
+  // Phase1は書類BOX・経費のみ。将来ここへダッシュボード/請求書/入金/月次レポート/
+  // 税理士提出を追加できるよう、専用のNavGroupとして独立させておく。
+  if (canViewFinance(role)) {
+    groups.push({
+      title: "経理",
+      items: [
+        { href: "/accounting/documents", label: "書類BOX" },
+        { href: "/accounting/expenses", label: "経費" },
+      ],
+    });
+  }
 
   const managementItems: NavItem[] = [];
   if (canAccessManagementFeatures(role)) {
