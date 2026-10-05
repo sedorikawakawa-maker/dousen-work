@@ -90,6 +90,7 @@ export type AccountingDocumentType = "receipt" | "invoice_received" | "other";
 export type AccountingDocumentOcrStatus = "pending" | "processing" | "completed" | "failed" | "skipped";
 export type AccountingDocumentStatus = "uploaded" | "confirmed" | "rejected" | "voided";
 export type ExpenseStatus = "confirmed" | "cancelled";
+export type InvoiceDocumentStatus = "issuing" | "generated" | "voided";
 
 export interface Database {
   public: {
@@ -784,6 +785,9 @@ export interface Database {
           billing_cc_email: string | null;
           billing_method: BillingMethod | null;
           billing_postal_address: string | null;
+          billing_department: string | null;
+          billing_postal_code: string | null;
+          payment_due_days: number | null;
           contract_cycle_months: number | null;
           renewal_month: number | null;
           billing_notes: string | null;
@@ -892,6 +896,8 @@ export interface Database {
           unit_price_ex_tax: number;
           tax_excluded_amount: number;
           amount_override: number | null;
+          tax_rate: number | null;
+          tax_category: string | null;
           notes: string | null;
           created_at: string;
           cancelled_at: string | null;
@@ -993,6 +999,80 @@ export interface Database {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["expenses"]["Insert"]>;
+        Relationships: [];
+      };
+      company_profile: {
+        Row: {
+          id: number;
+          company_name: string | null;
+          postal_code: string | null;
+          address: string | null;
+          phone: string | null;
+          email: string | null;
+          invoice_registration_number: string | null;
+          bank_name: string | null;
+          branch_name: string | null;
+          account_type: string | null;
+          account_number: string | null;
+          account_holder_name: string | null;
+          default_payment_due_days: number | null;
+          note: string | null;
+          logo_drive_file_id: string | null;
+          logo_drive_url: string | null;
+          updated_at: string;
+          updated_by_staff_id: string | null;
+        };
+        Insert: Omit<Database["public"]["Tables"]["company_profile"]["Row"], "id" | "updated_at"> & {
+          id?: number;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["company_profile"]["Insert"]>;
+        Relationships: [];
+      };
+      invoice_number_counters: {
+        Row: {
+          period_key: string;
+          last_number: number;
+          updated_at: string;
+        };
+        Insert: Omit<Database["public"]["Tables"]["invoice_number_counters"]["Row"], "last_number" | "updated_at"> & {
+          last_number?: number;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["invoice_number_counters"]["Insert"]>;
+        Relationships: [];
+      };
+      invoice_documents: {
+        Row: {
+          id: string;
+          invoice_id: string;
+          invoice_number: string;
+          status: InvoiceDocumentStatus;
+          generation_error: string | null;
+          snapshot: unknown;
+          issue_date: string;
+          due_date: string;
+          drive_file_id: string | null;
+          drive_url: string | null;
+          issued_by_staff_id: string;
+          issued_at: string;
+          voided_at: string | null;
+          voided_by_staff_id: string | null;
+          void_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<
+          Database["public"]["Tables"]["invoice_documents"]["Row"],
+          "id" | "status" | "issued_at" | "created_at" | "updated_at"
+        > & {
+          id?: string;
+          status?: InvoiceDocumentStatus;
+          issued_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["invoice_documents"]["Insert"]>;
         Relationships: [];
       };
     };
@@ -1184,6 +1264,20 @@ export interface Database {
         Args: {
           p_credential_id: string;
           p_access_type: string;
+        };
+        Returns: undefined;
+      };
+      begin_invoice_document_issue: {
+        Args: {
+          p_invoice_id: string;
+          p_issue_date: string;
+        };
+        Returns: { invoice_document_id: string; invoice_number: string; issue_date: string; due_date: string };
+      };
+      void_invoice_document: {
+        Args: {
+          p_invoice_document_id: string;
+          p_reason: string;
         };
         Returns: undefined;
       };

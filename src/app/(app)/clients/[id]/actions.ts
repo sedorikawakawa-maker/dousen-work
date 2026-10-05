@@ -374,6 +374,11 @@ export async function saveClientBillingProfileAction(formData: FormData) {
       billing_cc_email: billingCcEmail,
       billing_method: billingMethod,
       billing_postal_address: billingPostalAddress,
+      // Phase2A時点ではこの画面にまだ入力欄がないため、他のoptional項目と同様nullを明示する
+      // （billing_department/billing_postal_code/payment_due_daysの入力UIはPhase2B以降で追加）。
+      billing_department: null,
+      billing_postal_code: null,
+      payment_due_days: null,
       contract_cycle_months: contractCycleMonths,
       renewal_month: renewalMonth,
       billing_notes: billingNotes,

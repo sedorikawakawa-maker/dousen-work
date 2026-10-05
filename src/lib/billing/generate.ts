@@ -206,6 +206,10 @@ async function insertInvoiceItemIfMissing(
     unit_price_ex_tax: input.unitPriceExTax,
     tax_excluded_amount: computeTaxExcludedAmount(input.quantity, input.unitPriceExTax),
     amount_override: null,
+    // Phase2Aではtax_rate/tax_categoryの入力UIをまだ追加しないため、生成時は常にnull
+    // （正式請求書発行RPC側で未設定の明細を発行前に検出してブロックする）。
+    tax_rate: null,
+    tax_category: null,
     notes: input.notes,
     cancelled_at: null,
     cancelled_by_staff_id: null,
