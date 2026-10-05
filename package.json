@@ -11,8 +11,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@embedpdf/fonts-jp": "^1.0.0",
+    "@react-pdf/renderer": "^4.9.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
+    "fontkit": "^2.0.4",
     "googleapis": "^176.0.0",
     "next": "16.3.1",
     "react": "19.2.8",
@@ -21,11 +24,13 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/fontkit": "^2.0.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
+    "pdf-lib": "^1.17.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.11"
