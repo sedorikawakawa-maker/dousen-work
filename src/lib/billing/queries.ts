@@ -164,6 +164,8 @@ export interface ManagementInvoiceItemRow {
   unit_price_ex_tax: number;
   tax_excluded_amount: number;
   amount_override: number | null;
+  tax_rate: number | null;
+  tax_category: string | null;
   notes: string | null;
   cancelled_at: string | null;
 }

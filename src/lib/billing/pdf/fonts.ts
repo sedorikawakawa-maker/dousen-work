@@ -18,14 +18,18 @@ import { Font } from "@react-pdf/renderer";
 // （fs.readFileSync自体はexportsマップの制約を受けないため、パッケージルートが分かれば
 // 問題なくファイルを読み込める。Windows/Linux双方でpath.join経由のネイティブセパレータに
 // なるため、OS固有の絶対パスをハードコードしない）。
+// パス解決はregisterInvoiceFonts()呼び出し時まで遅延させる（モジュール読み込み時には行わない）。
+// Next.jsのビルド時ページデータ収集（next build）は、ルートから到達可能なモジュールを
+// インポートして静的解析するだけでなく、トップレベルのコードも評価するため、モジュール読み込み
+// 時点でrequire.resolve()を呼ぶと、バンドラーが提供する独自のrequire.resolve実装
+// （実ファイルパスではなく内部モジュールIDのような値を返す場合がある）に当たってしまい
+// ビルドが失敗することが判明した。実際のPDF生成（Node runtime実行時）まで解決を遅らせることで
+// 常に本物のファイルシステムパスを得る。
 function resolveFontPath(fileName: string): string {
   const mainEntryPath = require.resolve("@embedpdf/fonts-jp");
   const packageRoot = path.dirname(path.dirname(mainEntryPath));
   return path.join(packageRoot, "fonts", fileName);
 }
-
-export const NOTO_SANS_JP_REGULAR_PATH = resolveFontPath("NotoSansJP-Regular.otf");
-export const NOTO_SANS_JP_BOLD_PATH = resolveFontPath("NotoSansJP-Bold.otf");
 
 export const INVOICE_FONT_FAMILY = "NotoSansJP";
 
@@ -40,11 +44,18 @@ let cachedRegularFont: fontkit.Font | null = null;
 export function registerInvoiceFonts(): void {
   if (registered) return;
 
+  let regularPath: string;
+  let boldPath: string;
   let regularBuffer: Buffer;
   let boldBuffer: Buffer;
   try {
-    regularBuffer = readFileSync(NOTO_SANS_JP_REGULAR_PATH);
-    boldBuffer = readFileSync(NOTO_SANS_JP_BOLD_PATH);
+    regularPath = resolveFontPath("NotoSansJP-Regular.otf");
+    boldPath = resolveFontPath("NotoSansJP-Bold.otf");
+    // 対象ファイルはnext.config.tsのoutputFileTracingIncludesで明示的にserver bundleへ
+    // 含めているため、Turbopackの動的パス検出による「プロジェクト全体をトレース」という
+    // 保守的なフォールバックは不要（turbopackIgnoreで抑制する）。
+    regularBuffer = readFileSync(/* turbopackIgnore: true */ regularPath);
+    boldBuffer = readFileSync(/* turbopackIgnore: true */ boldPath);
   } catch (err) {
     throw new Error(
       `請求書PDF用フォント（Noto Sans JP）の読み込みに失敗しました。@embedpdf/fonts-jpのインストール状態を確認してください: ${
@@ -56,8 +67,8 @@ export function registerInvoiceFonts(): void {
   Font.register({
     family: INVOICE_FONT_FAMILY,
     fonts: [
-      { src: NOTO_SANS_JP_REGULAR_PATH, fontWeight: "normal" },
-      { src: NOTO_SANS_JP_BOLD_PATH, fontWeight: "bold" },
+      { src: regularPath, fontWeight: "normal" },
+      { src: boldPath, fontWeight: "bold" },
     ],
   });
 

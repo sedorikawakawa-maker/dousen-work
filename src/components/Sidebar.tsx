@@ -59,6 +59,7 @@ function buildNavGroups(role: StaffRole): NavGroup[] {
       items: [
         { href: "/accounting/documents", label: "書類BOX" },
         { href: "/accounting/expenses", label: "経費" },
+        { href: "/accounting/invoices", label: "請求書" },
       ],
     });
   }

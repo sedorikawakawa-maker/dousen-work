@@ -1303,6 +1303,14 @@ export interface Database {
         };
         Returns: undefined;
       };
+      set_invoice_item_tax_rate: {
+        Args: {
+          p_invoice_item_id: string;
+          p_tax_rate: number;
+          p_tax_category: string | null;
+        };
+        Returns: string;
+      };
     };
     Enums: Record<string, never>;
   };

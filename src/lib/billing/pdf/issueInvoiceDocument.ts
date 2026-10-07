@@ -7,6 +7,7 @@ import { generateInvoicePdf } from "./generateInvoicePdf";
 import { validateInvoiceDocumentSnapshot } from "./snapshot";
 import { buildInvoiceDocumentFileName } from "./driveFileName";
 import { toSafeGenerationErrorMessage } from "./errors";
+import { beginInvoiceDocumentIssue } from "@/lib/billing/invoiceDocuments";
 
 type TypedClient = SupabaseClient<Database>;
 
@@ -118,4 +119,42 @@ export async function generateAndStoreInvoiceDocumentPdf(
   }
 
   return { error: null, driveFileId, driveUrl };
+}
+
+export interface IssueAndGenerateInvoiceDocumentResult {
+  error: string | null;
+  invoiceDocumentId?: string;
+  driveFileId?: string;
+  driveUrl?: string;
+}
+
+/**
+ * /accounting/invoices の「発行」「再発行」ボタンから使う、Phase2A+Phase2Cを繋ぐだけの
+ * 薄い組み合わせ関数（ロジック自体はbeginInvoiceDocumentIssue/generateAndStoreInvoiceDocumentPdf
+ * をそのまま呼ぶだけで、UI層で発行処理を再実装しない）。
+ * begin側が失敗した場合（tax_rate未設定・company_profile不足・既に有効な発行データが
+ * 存在する等）は、generateAndStoreInvoiceDocumentPdfを呼ばずそのままエラーを返す。
+ */
+export async function issueAndGenerateInvoiceDocument(
+  supabase: TypedClient,
+  driveService: DriveService,
+  invoiceId: string,
+  issueDateIso: string,
+): Promise<IssueAndGenerateInvoiceDocumentResult> {
+  const beginResult = await beginInvoiceDocumentIssue(supabase, invoiceId, issueDateIso);
+  if (beginResult.error || !beginResult.invoiceDocumentId) {
+    return { error: beginResult.error ?? "請求書の発行開始に失敗しました。" };
+  }
+
+  const generateResult = await generateAndStoreInvoiceDocumentPdf(
+    supabase,
+    driveService,
+    beginResult.invoiceDocumentId,
+  );
+  return {
+    error: generateResult.error,
+    invoiceDocumentId: beginResult.invoiceDocumentId,
+    driveFileId: generateResult.driveFileId,
+    driveUrl: generateResult.driveUrl,
+  };
 }
