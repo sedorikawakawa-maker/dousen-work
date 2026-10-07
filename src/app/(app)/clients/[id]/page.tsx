@@ -487,6 +487,17 @@ export default async function ClientDetailPage({
                 </label>
 
                 <label className="text-sm font-medium text-neutral-700">
+                  請求先部署名（任意）
+                  <input
+                    name="billingDepartment"
+                    type="text"
+                    placeholder="経理部"
+                    defaultValue={billingProfile?.billing_department ?? ""}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  />
+                </label>
+
+                <label className="text-sm font-medium text-neutral-700">
                   請求担当者名
                   <input
                     name="billingContactName"
@@ -495,6 +506,33 @@ export default async function ClientDetailPage({
                     className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
                   />
                 </label>
+
+                <label className="text-sm font-medium text-neutral-700">
+                  請求先郵便番号
+                  <input
+                    name="billingPostalCode"
+                    type="text"
+                    placeholder="260-0015"
+                    defaultValue={billingProfile?.billing_postal_code ?? ""}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  />
+                </label>
+
+                <label className="text-sm font-medium text-neutral-700">
+                  郵送先（住所）
+                  <textarea
+                    name="billingPostalAddress"
+                    rows={2}
+                    defaultValue={billingProfile?.billing_postal_address ?? ""}
+                    className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
+                  />
+                </label>
+
+                {!billingProfile?.billing_postal_code || !billingProfile?.billing_postal_address ? (
+                  <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    正式請求書を発行するには請求先の郵便番号・住所が必要です。
+                  </p>
+                ) : null}
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="text-sm font-medium text-neutral-700">
@@ -532,13 +570,19 @@ export default async function ClientDetailPage({
                 </label>
 
                 <label className="text-sm font-medium text-neutral-700">
-                  郵送先
-                  <textarea
-                    name="billingPostalAddress"
-                    rows={2}
-                    defaultValue={billingProfile?.billing_postal_address ?? ""}
+                  支払サイト（日数・任意）
+                  <input
+                    name="paymentDueDays"
+                    type="number"
+                    min={1}
+                    max={365}
+                    placeholder="30"
+                    defaultValue={billingProfile?.payment_due_days?.toString() ?? ""}
                     className="mt-1.5 w-full rounded-xl border border-neutral-300 px-3.5 py-3 text-base"
                   />
+                  <span className="mt-1 block text-xs text-neutral-500">
+                    未設定の場合は自社請求設定の標準支払日数を使用します。
+                  </span>
                 </label>
 
                 <div className="grid grid-cols-1 gap-4 border-t border-neutral-100 pt-4 sm:grid-cols-2">

@@ -34,6 +34,7 @@ import type {
   MaterialSubmissionFileInput,
   PostType,
 } from "@/lib/supabase/database.types";
+import { isValidBillingPostalCode, parsePaymentDueDays } from "@/lib/clients/billingProfileValidation";
 
 function emptyToNull(value: FormDataEntryValue | null): string | null {
   const text = String(value ?? "").trim();
@@ -320,11 +321,14 @@ export async function saveClientBillingProfileAction(formData: FormData) {
 
   const invoiceRequired = formData.get("invoiceRequired") === "true";
   const billingCompanyName = emptyToNull(formData.get("billingCompanyName"));
+  const billingDepartment = emptyToNull(formData.get("billingDepartment"));
   const billingContactName = emptyToNull(formData.get("billingContactName"));
+  const billingPostalCode = emptyToNull(formData.get("billingPostalCode"));
   const billingEmail = emptyToNull(formData.get("billingEmail"));
   const billingCcEmail = emptyToNull(formData.get("billingCcEmail"));
   const billingMethodRaw = emptyToNull(formData.get("billingMethod"));
   const billingPostalAddress = emptyToNull(formData.get("billingPostalAddress"));
+  const paymentDueDaysRaw = emptyToNull(formData.get("paymentDueDays"));
   const contractCycleMonthsRaw = emptyToNull(formData.get("contractCycleMonths"));
   const renewalMonthRaw = emptyToNull(formData.get("renewalMonth"));
   const billingNotes = emptyToNull(formData.get("billingNotes"));
@@ -334,6 +338,14 @@ export async function saveClientBillingProfileAction(formData: FormData) {
   }
   if (billingCcEmail && !EMAIL_PATTERN.test(billingCcEmail)) {
     redirect(billingUrl(clientId, { error: "CCメールアドレスの形式が正しくありません。" }));
+  }
+  if (billingPostalCode && !isValidBillingPostalCode(billingPostalCode)) {
+    redirect(billingUrl(clientId, { error: "郵便番号は「123-4567」の形式で入力してください。" }));
+  }
+
+  const { value: paymentDueDays, error: paymentDueDaysError } = parsePaymentDueDays(paymentDueDaysRaw);
+  if (paymentDueDaysError) {
+    redirect(billingUrl(clientId, { error: paymentDueDaysError }));
   }
 
   let billingMethod: BillingMethod | null = null;
@@ -369,16 +381,14 @@ export async function saveClientBillingProfileAction(formData: FormData) {
       client_id: clientId,
       invoice_required: invoiceRequired,
       billing_company_name: billingCompanyName,
+      billing_department: billingDepartment,
       billing_contact_name: billingContactName,
+      billing_postal_code: billingPostalCode,
       billing_email: billingEmail,
       billing_cc_email: billingCcEmail,
       billing_method: billingMethod,
       billing_postal_address: billingPostalAddress,
-      // Phase2A時点ではこの画面にまだ入力欄がないため、他のoptional項目と同様nullを明示する
-      // （billing_department/billing_postal_code/payment_due_daysの入力UIはPhase2B以降で追加）。
-      billing_department: null,
-      billing_postal_code: null,
-      payment_due_days: null,
+      payment_due_days: paymentDueDays,
       contract_cycle_months: contractCycleMonths,
       renewal_month: renewalMonth,
       billing_notes: billingNotes,
