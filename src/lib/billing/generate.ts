@@ -206,9 +206,11 @@ async function insertInvoiceItemIfMissing(
     unit_price_ex_tax: input.unitPriceExTax,
     tax_excluded_amount: computeTaxExcludedAmount(input.quantity, input.unitPriceExTax),
     amount_override: null,
-    // Phase2Aではtax_rate/tax_categoryの入力UIをまだ追加しないため、生成時は常にnull
-    // （正式請求書発行RPC側で未設定の明細を発行前に検出してブロックする）。
-    tax_rate: null,
+    // 運用ルール: 当面すべての請求明細は税率10%（2026-10-07決定）。新規生成される通常の明細は
+    // 常にtax_rate=0.10で保存し、人間による税率選択操作（set_invoice_item_tax_rate RPC）は
+    // 例外対応のためだけに残す。tax_categoryは命名規則がまだ定まっていないため、
+    // 自己判断で新しい値を作らずnullのままにする（必要になればRPC経由で人間が設定する）。
+    tax_rate: 0.1,
     tax_category: null,
     notes: input.notes,
     cancelled_at: null,
