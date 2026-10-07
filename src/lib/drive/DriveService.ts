@@ -46,6 +46,12 @@ export interface ResolveAccountingDocumentFolderInput {
   yearMonth: string;
 }
 
+export interface ResolveInvoiceDocumentFolderInput {
+  clientId: string;
+  /** 'YYYY'形式の年フォルダ名（請求書の発行年で分ける）。 */
+  year: string;
+}
+
 export interface CreateResumableUploadSessionInput {
   /** アップロード先フォルダID（resolveFolder等で事前に解決済みのもの。複数ファイルでも1回の解決結果を使い回す）。 */
   folderId: string;
@@ -101,6 +107,13 @@ export interface DriveService {
    */
   resolveAccountingDocumentFolder(input: ResolveAccountingDocumentFolderInput): Promise<DriveFolderRef>;
   /**
+   * 正式請求書PDF専用: {root}/{client_code}_{company_name}/請求書/{year}/ を解決(無ければ作成)する。
+   * resolveClientFolderで「請求書」用途フォルダを解決し、その配下にfindOrCreateFolderで
+   * 年フォルダをもう1段解決する（resolveMaterialSubmissionFolderと同じ2段階パターン）。
+   * 既存の顧客フォルダ構造・他の用途フォルダ（制作動画等）には一切影響しない。
+   */
+  resolveInvoiceDocumentFolder(input: ResolveInvoiceDocumentFolderInput): Promise<DriveFolderRef>;
+  /**
    * 汎用: 指定フォルダへの1ファイル分のresumable upload sessionを発行する。
    * ブラウザがこのsession URLへ直接PUTすることで、動画本体をNetlify Functions
    * （Server Action）のリクエストボディへ一切通さずにGoogle Driveへ送れる。
@@ -126,7 +139,7 @@ export interface DriveService {
  * （ファイル本体は破棄される）。**開発環境専用**で、本番では絶対に使用されない
  * （getDriveService() 側でNODE_ENV=productionでは選択されないよう制御している）。
  */
-class MockDriveService implements DriveService {
+export class MockDriveService implements DriveService {
   readonly isMock = true;
 
   async uploadFile({ file, clientId, folderHint }: DriveUploadInput): Promise<DriveUploadResult> {
@@ -185,6 +198,18 @@ class MockDriveService implements DriveService {
     return {
       folderId: id,
       folderUrl: `https://drive.google.com/mock-storage/_accounting/書類BOX/${encodeURIComponent(yearMonth)}?id=${id}`,
+    };
+  }
+
+  /** clientId+yearから決定的なIDを作る（同じ組み合わせなら毎回同じフォルダに解決される）。 */
+  async resolveInvoiceDocumentFolder({
+    clientId,
+    year,
+  }: ResolveInvoiceDocumentFolderInput): Promise<DriveFolderRef> {
+    const id = `mock-folder-${clientId}-請求書-${year}`;
+    return {
+      folderId: id,
+      folderUrl: `https://drive.google.com/mock-storage/${clientId}/請求書/${encodeURIComponent(year)}?id=${id}`,
     };
   }
 

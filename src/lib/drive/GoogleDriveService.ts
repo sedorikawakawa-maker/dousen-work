@@ -8,6 +8,7 @@ import type {
   DriveUploadResult,
   ResolveAccountingDocumentFolderInput,
   ResolveFolderInput,
+  ResolveInvoiceDocumentFolderInput,
   ResolveMaterialSubmissionFolderInput,
   ResumableUploadSession,
   UploadToResolvedFolderInput,
@@ -255,6 +256,62 @@ export class GoogleDriveService implements DriveService {
       const documentBox = await findOrCreateFolder(drive, "書類BOX", accountingRoot.id);
       const monthFolder = await findOrCreateFolder(drive, input.yearMonth, documentBox.id);
       return { folderId: monthFolder.id, folderUrl: `https://drive.google.com/drive/folders/${monthFolder.id}` };
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+  }
+
+  /**
+   * 正式請求書PDF専用: {root}/{client_code}_{company_name}/請求書/{year}/ を解決する。
+   * resolveClientFolderで「請求書」用途フォルダを解決し、その配下にfindOrCreateFolderで
+   * 年フォルダをもう1段解決する（resolveMaterialSubmissionFolderと同じ2段階パターン）。
+   */
+  async resolveInvoiceDocumentFolder(input: ResolveInvoiceDocumentFolderInput): Promise<DriveFolderRef> {
+    const row = await getDriveIntegrationRow();
+    if (!row || row.status !== "connected" || !row.refresh_token_encrypted) {
+      throw new Error("Google Driveが連携されていません。管理者にご連絡ください。");
+    }
+    if (!row.root_folder_id) {
+      throw new Error("Google Driveの保存先フォルダが設定されていません。管理者にご連絡ください。");
+    }
+
+    const refreshToken = await getDecryptedRefreshToken();
+    if (!refreshToken) {
+      throw new Error("Google Drive連携が無効です。管理者にご連絡ください。");
+    }
+
+    let drive;
+    try {
+      const authClient = await createAuthorizedClient(refreshToken);
+      drive = getDriveClient(authClient);
+    } catch (err) {
+      throw new Error(describeGoogleError(err));
+    }
+
+    let resolvedClientCode = "unknown";
+    let companyName = input.clientId;
+    if (UUID_PATTERN.test(input.clientId)) {
+      const admin = createSupabaseAdminClient();
+      const { data: client } = await admin
+        .from("clients")
+        .select("client_code, company_name")
+        .eq("id", input.clientId)
+        .maybeSingle();
+      if (client) {
+        resolvedClientCode = client.client_code;
+        companyName = client.company_name;
+      }
+    }
+
+    try {
+      const invoiceFolderId = await resolveClientFolder(drive, {
+        rootFolderId: row.root_folder_id,
+        clientCode: resolvedClientCode,
+        companyName,
+        folderHint: "請求書",
+      });
+      const yearFolder = await findOrCreateFolder(drive, input.year, invoiceFolderId);
+      return { folderId: yearFolder.id, folderUrl: `https://drive.google.com/drive/folders/${yearFolder.id}` };
     } catch (err) {
       throw new Error(describeGoogleError(err));
     }

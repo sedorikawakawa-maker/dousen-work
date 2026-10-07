@@ -1049,6 +1049,7 @@ export interface Database {
           invoice_number: string;
           status: InvoiceDocumentStatus;
           generation_error: string | null;
+          generation_started_at: string | null;
           snapshot: unknown;
           issue_date: string;
           due_date: string;
@@ -1278,6 +1279,27 @@ export interface Database {
         Args: {
           p_invoice_document_id: string;
           p_reason: string;
+        };
+        Returns: undefined;
+      };
+      begin_invoice_document_generation_attempt: {
+        Args: {
+          p_invoice_document_id: string;
+        };
+        Returns: { snapshot: unknown; invoice_id: string; client_id: string };
+      };
+      complete_invoice_document_generation: {
+        Args: {
+          p_invoice_document_id: string;
+          p_drive_file_id: string;
+          p_drive_url: string;
+        };
+        Returns: undefined;
+      };
+      mark_invoice_document_generation_failed: {
+        Args: {
+          p_invoice_document_id: string;
+          p_error_message: string;
         };
         Returns: undefined;
       };
