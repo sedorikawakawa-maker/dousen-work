@@ -1,18 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Phase2B: 請求書PDF生成(src/lib/billing/pdf)がfs.readFileSync(path.join(...))で
-  // @embedpdf/fonts-jp配下のOTFを実行時読み込みするため、Next.jsのoutput file tracingが
-  // 動的に構築したパスを静的解析で検出できない可能性がある。outputFileTracingIncludes
-  // (Next.js 16ではexperimentalではなく安定版のトップレベル設定)で、どのルートの
-  // server bundleにもNotoSansJP Regular/Boldの2ウェイトのみ（未使用5ウェイトは含めない）
-  // を明示的に含める。まだ特定のルート/Server ActionからPDF生成を呼んでいないため
-  // （Phase2C以降で接続予定）、ルートパターンは"/**"とし確実性を優先する。
+  // 請求書PDF生成(src/lib/billing/pdf)がfs.readFileSync(path.join(process.cwd(), ...))で
+  // src/assets/fonts/配下のNoto Sans JP OTF（Regular/Boldの2ウェイトのみ、未使用5ウェイトは
+  // 含めない）を実行時読み込みする。outputFileTracingIncludes（Next.js 16では安定版の
+  // トップレベル設定）で、どのルートのserver bundleにもこの2ファイルを明示的に含める
+  // （本番(Netlify)のバンドル済みランタイムでの読み込み失敗を防ぐための明示的な保証。
+  // 旧実装はnode_modules/@embedpdf/fonts-jp配下を参照していたが、フォント本体を
+  // src/assets/fonts/へ固定配置したためそちらは不要になった）。
   outputFileTracingIncludes: {
-    "/**": [
-      "./node_modules/@embedpdf/fonts-jp/fonts/NotoSansJP-Regular.otf",
-      "./node_modules/@embedpdf/fonts-jp/fonts/NotoSansJP-Bold.otf",
-    ],
+    "/**": ["./src/assets/fonts/NotoSansJP-Regular.otf", "./src/assets/fonts/NotoSansJP-Bold.otf"],
   },
   experimental: {
     // SNS素材（画像・動画）を顧客向けフォーム/スタッフ登録からアップロードできるよう、

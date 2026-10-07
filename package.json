@@ -11,7 +11,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@embedpdf/fonts-jp": "^1.0.0",
     "@react-pdf/renderer": "^4.9.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",

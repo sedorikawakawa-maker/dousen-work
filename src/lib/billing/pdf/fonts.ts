@@ -6,29 +6,26 @@ import * as fontkit from "fontkit";
 import { Font } from "@react-pdf/renderer";
 
 // 正式請求書PDF専用の日本語フォント（Noto Sans JP, SIL Open Font License 1.1）。
-// @embedpdf/fonts-jp（npm依存）が同梱するフルセットOTFをそのまま使う。Webフォント用の
+// フォント本体（Regular/Boldの2ウェイトのみ）はsrc/assets/fonts/へこのリポジトリの一部として
+// 固定配置している（node_modules配下のnpm依存パッケージからは読まない）。Webフォント用の
 // unicode-range分割サブセットではなく、1ウェイト=1ファイルの完全なグリフセットのため、
 // 会社名・住所・人名・摘要に任意の漢字（異体字・旧字体含む、JIS X 0208/0213準拠の範囲）が
 // 入っても文字化け（豆腐文字）を起こさない。ブラウザへは一切配布しない
 // （このモジュールはserver-onlyであり、Next.jsのクライアントバンドルには含まれない）。
-// @embedpdf/fonts-jpのpackage.jsonはexportsマップで"."（dist/index.cjs）のみを公開しており、
-// "./package.json"や"./fonts/*"はサブパスとして解決できない（Node標準のexports制限）。
-// そのため、許可されているメインエントリ(".")をrequire.resolveで解決し、そこから
-// パッケージルート（dist/の親）を導出してfontsディレクトリへ辿る
-// （fs.readFileSync自体はexportsマップの制約を受けないため、パッケージルートが分かれば
-// 問題なくファイルを読み込める。Windows/Linux双方でpath.join経由のネイティブセパレータに
-// なるため、OS固有の絶対パスをハードコードしない）。
-// パス解決はregisterInvoiceFonts()呼び出し時まで遅延させる（モジュール読み込み時には行わない）。
-// Next.jsのビルド時ページデータ収集（next build）は、ルートから到達可能なモジュールを
-// インポートして静的解析するだけでなく、トップレベルのコードも評価するため、モジュール読み込み
-// 時点でrequire.resolve()を呼ぶと、バンドラーが提供する独自のrequire.resolve実装
-// （実ファイルパスではなく内部モジュールIDのような値を返す場合がある）に当たってしまい
-// ビルドが失敗することが判明した。実際のPDF生成（Node runtime実行時）まで解決を遅らせることで
-// 常に本物のファイルシステムパスを得る。
-function resolveFontPath(fileName: string): string {
-  const mainEntryPath = require.resolve("@embedpdf/fonts-jp");
-  const packageRoot = path.dirname(path.dirname(mainEntryPath));
-  return path.join(packageRoot, "fonts", fileName);
+// ライセンス全文はsrc/assets/fonts/NotoSansJP-LICENSE.txtに同梱している（OFL1.1の
+// 「再配布時もライセンス全文を同梱する」要件を満たすため）。
+//
+// 過去の実装ではrequire.resolve("@embedpdf/fonts-jp")でnpmパッケージのインストール場所を
+// 逆算していたが、Netlify本番のバンドル済みサーバーランタイムではrequire.resolve自体が
+// Turbopack/webpack独自のシムに置き換わっており、実ファイルパスではなく内部モジュールID
+// （数値）を返すことがあり、本番でのみ"The path argument must be of type string. Received
+// type number"という実行時エラーを起こしていた（ローカルのNode直接実行やvitestでは
+// require.resolveがNode本来の実装のまま動くため再現しなかった）。
+// process.cwd() + 固定の相対パスというリテラルな文字列結合は、バンドラーのモジュール解決を
+// 一切経由しないため、本番バンドル後でも常に本物のファイルシステムパス文字列を返す。
+// テストで直接呼べるようexportする（require.resolveに依存せず常にstringを返すことの検証用）。
+export function resolveFontPath(fileName: string): string {
+  return path.join(process.cwd(), "src", "assets", "fonts", fileName);
 }
 
 export const INVOICE_FONT_FAMILY = "NotoSansJP";
@@ -58,7 +55,7 @@ export function registerInvoiceFonts(): void {
     boldBuffer = readFileSync(/* turbopackIgnore: true */ boldPath);
   } catch (err) {
     throw new Error(
-      `請求書PDF用フォント（Noto Sans JP）の読み込みに失敗しました。@embedpdf/fonts-jpのインストール状態を確認してください: ${
+      `請求書PDF用フォント（Noto Sans JP）の読み込みに失敗しました。src/assets/fonts/配下にNotoSansJP-Regular.otf/NotoSansJP-Bold.otfが存在するか確認してください: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
