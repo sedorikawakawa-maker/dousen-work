@@ -2,13 +2,15 @@ import "server-only";
 
 import { Document, Page, View, Text, StyleSheet } from "@react-pdf/renderer";
 import type { InvoiceDocumentSnapshot } from "./snapshot";
+import type { InvoiceTaxSummary } from "@/lib/billing/invoiceTaxSummary";
 import { INVOICE_FONT_FAMILY } from "./fonts";
 import { formatJapaneseDate, formatJapaneseMonth, formatQuantity, formatTaxRate, formatYen } from "./format";
 
 // Phase2B: レイアウトはA4縦1枚を基本としつつ、明細が多い場合はreact-pdfの自動改ページに委ねる
 // （Viewへ明示的な高さ指定をしないことで、明細行が増えればPageまたぎで自然に折り返す）。
-// 税額・税込合計はPhase2Aで端数処理ルールが未確定のため表示しない（9参照）。デザインは
-// 凝りすぎず、読みやすさ・文字化けゼロ・改ページ安定を優先する。
+// 消費税額・税込請求額（2026-10-07決定、freee準拠）はtaxSummaryとして呼び出し元
+// （generateInvoicePdf）から渡される（snapshot.itemsだけから計算済み。このコンポーネント内では
+// 一切再計算しない）。デザインは凝りすぎず、読みやすさ・文字化けゼロ・改ページ安定を優先する。
 
 const styles = StyleSheet.create({
   page: {
@@ -86,20 +88,43 @@ const styles = StyleSheet.create({
   cellTaxRate: { width: "7%", paddingHorizontal: 3, textAlign: "right" },
   cellRevenueMonth: { width: "7%", paddingHorizontal: 3, textAlign: "right" },
   tableHeaderText: { fontWeight: "bold", fontSize: 8 },
-  subtotalRow: {
+  grandTotalBox: {
     flexDirection: "row",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 4,
+    marginBottom: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderTop: "1.5pt solid #111111",
+    borderBottom: "1.5pt solid #111111",
+    backgroundColor: "#f2f2f2",
+  },
+  grandTotalLabel: { fontSize: 11, fontWeight: "bold" },
+  grandTotalValue: { fontSize: 16, fontWeight: "bold" },
+  taxSummarySection: {
     marginTop: 8,
+    alignSelf: "flex-end",
+    width: "55%",
+  },
+  taxSummaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     paddingHorizontal: 3,
+    paddingVertical: 2,
   },
   subtotalLabel: { marginRight: 12 },
   subtotalValue: { fontWeight: "bold" },
-  taxNote: {
+  grandTotalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginTop: 4,
-    fontSize: 8,
-    color: "#666666",
-    textAlign: "right",
+    paddingHorizontal: 3,
+    paddingVertical: 4,
+    borderTop: "1pt solid #333333",
   },
+  grandTotalRowLabel: { fontSize: 11, fontWeight: "bold" },
+  grandTotalRowValue: { fontSize: 11, fontWeight: "bold" },
   bottomSection: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -212,9 +237,44 @@ function BankBlock({ issuer }: { issuer: InvoiceDocumentSnapshot["issuer"] }) {
   );
 }
 
-export function InvoiceDocumentPdf({ snapshot }: { snapshot: InvoiceDocumentSnapshot }) {
-  const subtotalExTax = snapshot.items.reduce((sum, item) => sum + item.tax_excluded_amount, 0);
+function TaxSummarySection({ taxSummary }: { taxSummary: InvoiceTaxSummary }) {
+  return (
+    <View style={styles.taxSummarySection} wrap={false}>
+      <View style={styles.taxSummaryRow}>
+        <Text style={styles.subtotalLabel}>税抜小計</Text>
+        <Text style={styles.subtotalValue}>{formatYen(taxSummary.subtotalExTax)}</Text>
+      </View>
+      {taxSummary.taxBreakdown.map((row) => (
+        <View key={row.taxRate}>
+          <View style={styles.taxSummaryRow}>
+            <Text style={styles.subtotalLabel}>{formatTaxRate(row.taxRate)}対象</Text>
+            <Text style={styles.subtotalValue}>{formatYen(row.taxableAmount)}</Text>
+          </View>
+          <View style={styles.taxSummaryRow}>
+            <Text style={styles.subtotalLabel}>{formatTaxRate(row.taxRate)}消費税</Text>
+            <Text style={styles.subtotalValue}>{formatYen(row.taxAmount)}</Text>
+          </View>
+        </View>
+      ))}
+      <View style={styles.taxSummaryRow}>
+        <Text style={styles.subtotalLabel}>消費税合計</Text>
+        <Text style={styles.subtotalValue}>{formatYen(taxSummary.totalTax)}</Text>
+      </View>
+      <View style={styles.grandTotalRow}>
+        <Text style={styles.grandTotalRowLabel}>税込請求額</Text>
+        <Text style={styles.grandTotalRowValue}>{formatYen(taxSummary.totalIncludingTax)}</Text>
+      </View>
+    </View>
+  );
+}
 
+export function InvoiceDocumentPdf({
+  snapshot,
+  taxSummary,
+}: {
+  snapshot: InvoiceDocumentSnapshot;
+  taxSummary: InvoiceTaxSummary;
+}) {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -223,6 +283,13 @@ export function InvoiceDocumentPdf({ snapshot }: { snapshot: InvoiceDocumentSnap
         <View style={styles.topRow}>
           <RecipientBlock recipient={snapshot.recipient} />
           <InvoiceInfoBlock invoice={snapshot.invoice} />
+        </View>
+
+        {/* 税込請求額は請求書内で最も分かりやすい位置（冒頭・明細の直前）へ大きく表示する。
+            明細下部にも同じ値を含む内訳（税抜小計〜税込請求額）を別途表示する。 */}
+        <View style={styles.grandTotalBox}>
+          <Text style={styles.grandTotalLabel}>税込請求額</Text>
+          <Text style={styles.grandTotalValue}>{formatYen(taxSummary.totalIncludingTax)}</Text>
         </View>
 
         {snapshot.invoice.invoice_title ? (
@@ -234,11 +301,7 @@ export function InvoiceDocumentPdf({ snapshot }: { snapshot: InvoiceDocumentSnap
 
         <ItemsTable items={snapshot.items} />
 
-        <View style={styles.subtotalRow}>
-          <Text style={styles.subtotalLabel}>税抜小計</Text>
-          <Text style={styles.subtotalValue}>{formatYen(subtotalExTax)}</Text>
-        </View>
-        <Text style={styles.taxNote}>消費税額・税込合計の正式な計算はPhase2C以降で実装します（本書には含まれません）。</Text>
+        <TaxSummarySection taxSummary={taxSummary} />
 
         <View style={styles.bottomSection}>
           <BankBlock issuer={snapshot.issuer} />

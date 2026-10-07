@@ -151,6 +151,27 @@ describe("generateInvoicePdf（正常系）", () => {
   });
 });
 
+describe("generateInvoicePdf（税額計算、2026-10-07決定: freee準拠の税率別合算→切り捨て）", () => {
+  it("10%+8%+0%混在のsnapshotからでもPDFを正常に生成できる（複数税率対応）", async () => {
+    const snapshot = baseSnapshot();
+    snapshot.items = [
+      { ...snapshot.items[0], subject: "10%対象", tax_rate: 0.1, tax_excluded_amount: 100000 },
+      { ...snapshot.items[0], subject: "8%対象", tax_rate: 0.08, tax_excluded_amount: 50000 },
+      { ...snapshot.items[0], subject: "0%対象", tax_rate: 0, tax_excluded_amount: 20000 },
+    ];
+    const { buffer } = await generateInvoicePdf(snapshot);
+    expect(buffer.length).toBeGreaterThan(1000);
+  });
+
+  it("税抜55,555円・税率10%のsnapshotからでもPDFを正常に生成できる（端数処理の実動作確認）", async () => {
+    const snapshot = baseSnapshot();
+    snapshot.items[0].tax_excluded_amount = 55555;
+    snapshot.items[0].unit_price_ex_tax = 55555;
+    const { buffer } = await generateInvoicePdf(snapshot);
+    expect(buffer.length).toBeGreaterThan(1000);
+  });
+});
+
 describe("generateInvoicePdf（異常系）", () => {
   it("不正なsnapshot（必須項目欠落）は例外を投げる", async () => {
     await expect(generateInvoicePdf({})).rejects.toThrow(/snapshot/);
@@ -164,5 +185,11 @@ describe("generateInvoicePdf（異常系）", () => {
     const snapshot = baseSnapshot();
     snapshot.recipient.company_name = "株式会社テスト😀";
     await expect(generateInvoicePdf(snapshot)).rejects.toThrow(/存在しない文字/);
+  });
+
+  it("tax_rateが未設定(null)の明細が含まれる場合は例外を投げる（黙って0%扱いにしない）", async () => {
+    const snapshot = baseSnapshot();
+    snapshot.items[0].tax_rate = null;
+    await expect(generateInvoicePdf(snapshot)).rejects.toThrow(/税率が未設定/);
   });
 });
