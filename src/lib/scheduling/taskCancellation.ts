@@ -20,10 +20,11 @@ export interface CancellableTaskFields {
 /**
  * 個別取消できるタスクかどうか。RPC内の判定条件と同じものをUI表示用にも使う
  * （最終的な正本はRPC側。ここでの判定はボタンの出し分けと分かりやすいエラー表示のため）。
- * 自動生成(recurring)・制作待ち(production_waiting)・未取消のタスクのみ取消できる。
+ * 未取消であれば、status（素材待ち〜完了済み）・task_kind（recurring/spot）を問わず取消できる。
+ * 取消してもstatusは変えず、Wチェック・顧客確認・投稿実績等の関連履歴も残る。
  */
 export function canCancelProductionTask(task: CancellableTaskFields): boolean {
-  return task.task_kind === "recurring" && task.status === "production_waiting" && task.cancelled_at === null;
+  return task.cancelled_at === null;
 }
 
 export interface CancelProductionTaskResult {

@@ -56,6 +56,8 @@ export async function getStaffProgressOverview(supabase: TypedClient): Promise<S
         )
         .neq("status", "completed")
         .is("cancelled_at", null),
+      // 投稿実績はpost_recordsを直接数える（紐づく制作タスクが取消済みでも、post_record自体が
+      // 有効なら実績として残す。月次サマリー・ダッシュボードの実績と同じ意味）。
       supabase
         .from("post_records")
         .select("posted_by_staff_id, posted_at")

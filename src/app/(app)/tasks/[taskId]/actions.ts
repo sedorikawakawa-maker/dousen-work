@@ -14,6 +14,21 @@ const RESOLVABLE_STATUSES: ProductionTaskStatus[] = ["production_waiting", "in_p
 /** 取消済みタスクへの操作を分かりやすく拒否するための共通メッセージ（DB側トリガーでも防いでいる）。 */
 const CANCELLED_TASK_ERROR = "このタスクは取消済みのため操作できません";
 
+/**
+ * 取消済みタスクかどうか。Wチェック/顧客確認の承認・修正依頼のように、先に関連テーブル
+ * (w_checks / client_confirmations) を更新してからproduction_tasksを更新する操作では、
+ * production_tasks側がimmutableトリガーで失敗しても関連テーブルだけ更新されてしまうため、
+ * 関連テーブルを触る前にこの判定で止める（タスクが存在しない場合はfalse）。
+ */
+async function isTaskCancelled(supabase: SupabaseClient<Database>, taskId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("production_tasks")
+    .select("cancelled_at")
+    .eq("id", taskId)
+    .maybeSingle();
+  return !!data?.cancelled_at;
+}
+
 function emptyToNull(value: FormDataEntryValue | null): string | null {
   const text = String(value ?? "").trim();
   return text === "" ? null : text;
@@ -121,9 +136,13 @@ export async function resolveTaskMaterialWaitingAction(formData: FormData) {
 
   const { data: task } = await supabase
     .from("production_tasks")
-    .select("status")
+    .select("status, cancelled_at")
     .eq("id", taskId)
     .maybeSingle();
+
+  if (task?.cancelled_at) {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
+  }
 
   if (!task || task.status !== "material_waiting") {
     redirect(`/tasks/${taskId}?error=${encodeURIComponent("素材待ちのタスクのみ変更できます")}`);
@@ -241,6 +260,10 @@ export async function approveWCheckAction(formData: FormData) {
   const returnTo = safeReturnTo(formData.get("returnTo"), `/tasks/${taskId}`);
   const supabase = await createSupabaseServerClient();
 
+  if (await isTaskCancelled(supabase, taskId)) {
+    redirect(`${returnTo}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
+  }
+
   const { data: wcheck } = await supabase
     .from("w_checks")
     .select("requested_by_staff_id, status")
@@ -291,6 +314,10 @@ export async function requestWCheckRevisionAction(formData: FormData) {
 
   if (!revisionComment) {
     redirect(`${returnTo}?error=${encodeURIComponent("修正コメントを入力してください")}`);
+  }
+
+  if (await isTaskCancelled(supabase, taskId)) {
+    redirect(`${returnTo}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
   }
 
   const { data: wcheck } = await supabase
@@ -396,9 +423,13 @@ export async function requestClientConfirmationAction(formData: FormData) {
 
   const { data: task } = await supabase
     .from("production_tasks")
-    .select("status")
+    .select("status, cancelled_at")
     .eq("id", taskId)
     .maybeSingle();
+
+  if (task?.cancelled_at) {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
+  }
 
   if (!task || task.status !== "client_confirmation_waiting") {
     redirect(
@@ -424,6 +455,10 @@ export async function approveClientConfirmationAction(formData: FormData) {
   const taskId = String(formData.get("taskId"));
   const returnTo = safeReturnTo(formData.get("returnTo"), `/tasks/${taskId}`);
   const supabase = await createSupabaseServerClient();
+
+  if (await isTaskCancelled(supabase, taskId)) {
+    redirect(`${returnTo}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
+  }
 
   const { data: confirmation } = await supabase
     .from("client_confirmations")
@@ -460,6 +495,10 @@ export async function requestClientConfirmationRevisionAction(formData: FormData
 
   if (!revisionComment) {
     redirect(`${returnTo}?error=${encodeURIComponent("修正内容を入力してください")}`);
+  }
+
+  if (await isTaskCancelled(supabase, taskId)) {
+    redirect(`${returnTo}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
   }
 
   const { data: confirmation } = await supabase

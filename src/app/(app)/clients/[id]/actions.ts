@@ -223,13 +223,16 @@ export async function updateAssignmentAction(formData: FormData) {
       redirect(editUrl(clientId, { error: error.message, section: "assignment" }));
     }
 
-    // 主担当変更時: 未完了の制作タスクは新主担当へ引き継ぐ（過去実績の担当者は変更しない）
+    // 主担当変更時: 未完了の制作タスクは新主担当へ引き継ぐ（過去実績の担当者は変更しない）。
+    // 取消済みタスクは引き継ぎ対象外。取消済み行は変更不可トリガーで守られているため、
+    // cancelled_at is null で絞らないとUPDATE文全体が失敗し、未取消タスクも引き継がれなくなる。
     if (assignmentType === "primary") {
       await supabase
         .from("production_tasks")
         .update({ assignee_staff_id: staffId })
         .eq("client_id", clientId)
-        .neq("status", "completed");
+        .neq("status", "completed")
+        .is("cancelled_at", null);
     }
   }
 

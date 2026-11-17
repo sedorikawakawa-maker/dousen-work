@@ -3,8 +3,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { listUpcomingProductionTasks } from "@/lib/clients/queries";
 import { listScheduledPostsForMonth } from "@/lib/calendar/queries";
-import { listCandidateTasksForPostRecord } from "@/lib/postRecords/queries";
+import { listCandidateTasksForPostRecord, listRecentlyCompletedTasks } from "@/lib/postRecords/queries";
 import { getCurrentMonthClientProgress, getDashboardData } from "@/lib/dashboard/queries";
+import {
+  countPendingWChecks,
+  listPendingWCheckRevisionsForAssignee,
+  listPendingWChecksWithTasks,
+  listWChecksForTask,
+} from "@/lib/wchecks/queries";
+import {
+  listClientConfirmationsForClient,
+  listClientConfirmationsForTask,
+  listPendingClientConfirmationsWithTasks,
+} from "@/lib/clientConfirmations/queries";
 
 type TaskRow = Database["public"]["Tables"]["production_tasks"]["Row"];
 
@@ -175,5 +186,133 @@ describe("取消済みタスクがダッシュボード集計から除外され�
 
     expect(progress.get("client-1")?.carryover).toBe(1);
     expect(progress.get("client-1")?.required).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 全status取消対応: Wチェック待ち・顧客確認待ち等の業務キューからの除外と、履歴の保持
+// ---------------------------------------------------------------------------
+
+const CANCELLED_AT = "2026-11-10T00:00:00Z";
+
+describe("取消済みタスクがWチェック待ちのキューから除外される", () => {
+  const rows = {
+    production_tasks: [
+      task({ id: "wcheck-normal", status: "wcheck_waiting" }),
+      task({ id: "wcheck-cancelled", status: "wcheck_waiting", cancelled_at: CANCELLED_AT }),
+    ],
+    w_checks: [
+      { id: "w-normal", production_task_id: "wcheck-normal", status: "waiting", requested_at: "2026-11-05T00:00:00Z" },
+      { id: "w-cancelled", production_task_id: "wcheck-cancelled", status: "waiting", requested_at: "2026-11-04T00:00:00Z" },
+    ],
+  };
+
+  it("Wチェック待ち一覧（listPendingWChecksWithTasks）に取消済みタスクを含めない", async () => {
+    const items = await listPendingWChecksWithTasks(createStub(rows));
+    expect(items.map((i) => i.task.id)).toEqual(["wcheck-normal"]);
+  });
+
+  it("サイドバーのWチェック待ち件数（countPendingWChecks）も一覧と同じく取消済みを数えない", async () => {
+    expect(await countPendingWChecks(createStub(rows))).toBe(1);
+  });
+
+  it("取消済みタスクのw_checks自体は削除されず、タスク詳細の履歴として取得できる", async () => {
+    const history = await listWChecksForTask(createStub(rows), "wcheck-cancelled");
+    expect(history.map((w) => w.id)).toEqual(["w-cancelled"]);
+  });
+
+  it("Wチェック修正依頼の未対応一覧（listPendingWCheckRevisionsForAssignee）に取消済みタスクを含めない", async () => {
+    const supabase = createStub({
+      production_tasks: [
+        task({ id: "rev-normal", status: "in_production" }),
+        task({ id: "rev-cancelled", status: "in_production", cancelled_at: CANCELLED_AT }),
+      ],
+      w_checks: [
+        { id: "w1", production_task_id: "rev-normal", status: "revision_requested", requested_at: "2026-11-05T00:00:00Z" },
+        { id: "w2", production_task_id: "rev-cancelled", status: "revision_requested", requested_at: "2026-11-05T00:00:00Z" },
+      ],
+      wcheck_skips: [],
+    });
+    const items = await listPendingWCheckRevisionsForAssignee(supabase, "staff-1");
+    expect(items.map((i) => i.task.id)).toEqual(["rev-normal"]);
+  });
+});
+
+describe("取消済みタスクが顧客確認待ちのキューから除外される", () => {
+  const rows = {
+    production_tasks: [
+      task({ id: "cc-normal", status: "client_confirmation_waiting" }),
+      task({ id: "cc-cancelled", status: "client_confirmation_waiting", cancelled_at: CANCELLED_AT }),
+    ],
+    client_confirmations: [
+      { id: "c-normal", production_task_id: "cc-normal", status: "waiting", requested_at: "2026-11-05T00:00:00Z" },
+      { id: "c-cancelled", production_task_id: "cc-cancelled", status: "waiting", requested_at: "2026-11-04T00:00:00Z" },
+    ],
+  };
+
+  it("顧客確認待ち一覧・催促候補の元データ（listPendingClientConfirmationsWithTasks）に含めない", async () => {
+    const items = await listPendingClientConfirmationsWithTasks(createStub(rows));
+    expect(items.map((i) => i.task.id)).toEqual(["cc-normal"]);
+  });
+
+  it("取消済みタスクのclient_confirmationsは削除されず、タスク詳細・顧客の確認履歴から取得できる", async () => {
+    const forTask = await listClientConfirmationsForTask(createStub(rows), "cc-cancelled");
+    expect(forTask.map((c) => c.id)).toEqual(["c-cancelled"]);
+
+    const forClient = await listClientConfirmationsForClient(createStub(rows), "client-1");
+    expect(forClient.map((c) => c.id).sort()).toEqual(["c-cancelled", "c-normal"]);
+  });
+});
+
+describe("全statusの取消済みタスクが通常一覧・ダッシュボードから除外される", () => {
+  const STATUSES = [
+    "material_waiting",
+    "production_waiting",
+    "in_production",
+    "wcheck_waiting",
+    "client_confirmation_waiting",
+    "posting_waiting",
+  ] as const;
+
+  it.each(STATUSES)("status=%s の取消済みタスク（recurring/spot）は顧客の投稿スケジュール一覧に出ない", async (status) => {
+    const supabase = createStub({
+      production_tasks: [
+        task({ id: "normal", status }),
+        task({ id: "cancelled-recurring", status, cancelled_at: CANCELLED_AT }),
+        task({ id: "cancelled-spot", status, task_kind: "spot", schedule_rule_id: null, cancelled_at: CANCELLED_AT }),
+      ],
+    });
+    const tasks = await listUpcomingProductionTasks(supabase, "client-1");
+    expect(tasks.map((t) => t.id)).toEqual(["normal"]);
+  });
+
+  it.each(STATUSES)("status=%s の取消済みタスクは自分の担当タスク（今日やること・要対応）に出ない", async (status) => {
+    const supabase = createStub({
+      client_assignments: [],
+      clients_view: [],
+      posting_schedule_rules: [],
+      post_records: [],
+      production_tasks: [
+        task({ id: "normal", status }),
+        task({ id: "cancelled-spot", status, task_kind: "spot", cancelled_at: CANCELLED_AT }),
+      ],
+      material_submissions: [],
+      w_checks: [],
+      client_confirmations: [],
+    });
+    const data = await getDashboardData(supabase, "staff-1");
+    const ids = [...data.priorityTasks, ...data.dueTodayTasks, ...data.postingWaitingTasks].map((t) => t.id);
+    expect(ids).not.toContain("cancelled-spot");
+  });
+
+  it("取消済みの完了タスクは顧客詳細の「投稿済み」一覧（listRecentlyCompletedTasks）に出ない", async () => {
+    const supabase = createStub({
+      production_tasks: [
+        task({ id: "done-normal", status: "completed" }),
+        task({ id: "done-cancelled", status: "completed", cancelled_at: CANCELLED_AT }),
+      ],
+    });
+    const tasks = await listRecentlyCompletedTasks(supabase, "client-1");
+    expect(tasks.map((t) => t.id)).toEqual(["done-normal"]);
   });
 });

@@ -64,12 +64,16 @@ export async function getCurrentMonthClientProgress(
     if (entry) entry.carryover += 1;
   }
 
+  // 実績(actual)の正本はpost_records。ここでのproduction_tasksは「今月分の投稿実績」を
+  // 特定するためだけに使うので、意図的にcancelled_atで絞らない。
+  // 制作タスクを取消しても既存の投稿実績は実績として残り（post_record自体の取消時のみ除外）、
+  // スタッフ実績(getStaffProgressOverview)・月次サマリー(getMonthlySummary)と意味を揃える。
+  // 持越し件数（上のcarryoverTasks）は制作進捗なので、取消済みタスクを除外したままにする。
   const { data: monthTasks } = await supabase
     .from("production_tasks")
     .select("id, client_id")
     .in("client_id", clientIds)
     .eq("task_kind", "recurring")
-    .is("cancelled_at", null)
     .eq("source_month", monthStart);
   const clientIdByTaskId = new Map((monthTasks ?? []).map((t) => [t.id, t.client_id]));
   const taskIds = (monthTasks ?? []).map((t) => t.id);

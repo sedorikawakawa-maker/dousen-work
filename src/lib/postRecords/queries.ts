@@ -68,6 +68,7 @@ export async function listRecentlyCompletedTasks(
     .select("*")
     .eq("client_id", clientId)
     .eq("status", "completed")
+    .is("cancelled_at", null)
     .order("completed_at", { ascending: false })
     .limit(limit);
 

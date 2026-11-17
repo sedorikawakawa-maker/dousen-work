@@ -11,30 +11,34 @@ function task(overrides: Partial<CancellableTaskFields> = {}): CancellableTaskFi
   return { task_kind: "recurring", status: "production_waiting", cancelled_at: null, ...overrides };
 }
 
+const ALL_STATUSES = [
+  "material_waiting",
+  "production_waiting",
+  "in_production",
+  "wcheck_waiting",
+  "client_confirmation_waiting",
+  "posting_waiting",
+  "completed",
+] as const;
+
 describe("canCancelProductionTask（個別取消の可否判定）", () => {
   it("自動生成(recurring)・制作待ち・未取消なら取消できる", () => {
     expect(canCancelProductionTask(task())).toBe(true);
   });
 
-  it("既に取消済みなら取消できない（二重取消を防ぐ）", () => {
-    expect(canCancelProductionTask(task({ cancelled_at: "2026-10-26T00:00:00Z" }))).toBe(false);
+  it.each(ALL_STATUSES)("未取消なら status=%s のタスクも取消できる", (status) => {
+    expect(canCancelProductionTask(task({ status }))).toBe(true);
   });
 
-  it("素材待ち・制作中・Wチェック以降・顧客確認中・投稿待ち・完了済みは取消できない", () => {
-    for (const status of [
-      "material_waiting",
-      "in_production",
-      "wcheck_waiting",
-      "client_confirmation_waiting",
-      "posting_waiting",
-      "completed",
-    ] as const) {
-      expect(canCancelProductionTask(task({ status }))).toBe(false);
-    }
+  it.each(ALL_STATUSES)("スポットタスク(task_kind='spot')も status=%s で取消できる", (status) => {
+    expect(canCancelProductionTask(task({ task_kind: "spot", status }))).toBe(true);
   });
 
-  it("スポットタスク(task_kind='spot')は今回の取消対象に含めない", () => {
-    expect(canCancelProductionTask(task({ task_kind: "spot" }))).toBe(false);
+  it.each(ALL_STATUSES)("既に取消済みなら status=%s でも取消できない（二重取消を防ぐ）", (status) => {
+    expect(canCancelProductionTask(task({ status, cancelled_at: "2026-10-26T00:00:00Z" }))).toBe(false);
+    expect(
+      canCancelProductionTask(task({ task_kind: "spot", status, cancelled_at: "2026-10-26T00:00:00Z" })),
+    ).toBe(false);
   });
 });
 
@@ -68,7 +72,7 @@ describe("cancelProductionTask（cancel_production_task RPCを1回だけ呼ぶ�
     ]);
   });
 
-  it("RPC側で拒否された場合（二重取消・制作待ち以外）はそのメッセージを返す", async () => {
+  it("RPC側で拒否された場合（二重取消など）はそのメッセージを返す", async () => {
     const { client } = createSupabaseStub({ error: { message: "この制作タスクは既に取消済みです" } });
     const result = await cancelProductionTask(client, "task-1", "理由");
     expect(result.error).toBe("この制作タスクは既に取消済みです");

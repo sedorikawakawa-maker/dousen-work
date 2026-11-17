@@ -280,12 +280,15 @@ export async function getMonthlySummary(
 
     // 実績の正本は post_records。production_tasks.status=completed は
     // 業務フロー上の完了状態であり、月間の投稿本数集計には使わない。
+    // ここでのproduction_tasksは「その月の投稿実績」を特定するためだけに使うので、
+    // 意図的にcancelled_atで絞らない（制作タスクを取消しても既存の投稿実績は実績として残る。
+    // 実績から外れるのはpost_record自体を取消した場合のみ）。持越し件数は制作進捗なので
+    // 下のcarryoverTasksでは取消済みタスクを除外したままにする。
     const { data: monthTasks } = await supabase
       .from("production_tasks")
       .select("id, post_type")
       .eq("client_id", clientId)
       .eq("task_kind", "recurring")
-      .is("cancelled_at", null)
       .eq("source_month", monthStart);
 
     const postTypeByTaskId = new Map((monthTasks ?? []).map((t) => [t.id, t.post_type]));

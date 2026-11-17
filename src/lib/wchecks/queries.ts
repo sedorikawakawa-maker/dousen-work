@@ -18,16 +18,33 @@ export interface PendingWCheckItem {
  * 完全に同じ条件 status='waiting' を使い、一覧とバッジの件数がズレないようにする）。
  */
 export async function countPendingWChecks(supabase: TypedClient): Promise<number> {
-  const { count, error } = await supabase
+  // 取消済みタスクのWチェック待ちは数えない（一覧側と同じ条件）。
+  // w_checks自体は履歴として残るため、紐づくタスクのcancelled_atで判定する。
+  const { data: wchecks, error } = await supabase
     .from("w_checks")
-    .select("id", { count: "exact", head: true })
+    .select("production_task_id")
     .eq("status", "waiting");
 
   if (error) throw error;
-  return count ?? 0;
+  if (!wchecks || wchecks.length === 0) return 0;
+
+  const taskIds = [...new Set(wchecks.map((w) => w.production_task_id))];
+  const { data: tasks, error: tasksError } = await supabase
+    .from("production_tasks")
+    .select("id")
+    .in("id", taskIds)
+    .is("cancelled_at", null);
+
+  if (tasksError) throw tasksError;
+  const activeTaskIds = new Set((tasks ?? []).map((t) => t.id));
+  return wchecks.filter((w) => activeTaskIds.has(w.production_task_id)).length;
 }
 
-/** 現在Wチェック待ち(status=waiting)の一覧を、紐づくタスク情報とあわせて取得する。 */
+/**
+ * 現在Wチェック待ち(status=waiting)の一覧を、紐づくタスク情報とあわせて取得する。
+ * 取消済みタスクのWチェックは通常の業務キューから除外する（w_checks行は履歴として残り、
+ * タスク詳細画面からは参照できる）。
+ */
 export async function listPendingWChecksWithTasks(
   supabase: TypedClient,
 ): Promise<PendingWCheckItem[]> {
@@ -40,7 +57,11 @@ export async function listPendingWChecksWithTasks(
   if (!wchecks || wchecks.length === 0) return [];
 
   const taskIds = [...new Set(wchecks.map((w) => w.production_task_id))];
-  const { data: tasks } = await supabase.from("production_tasks").select("*").in("id", taskIds);
+  const { data: tasks } = await supabase
+    .from("production_tasks")
+    .select("*")
+    .in("id", taskIds)
+    .is("cancelled_at", null);
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
 
   const items: PendingWCheckItem[] = [];
@@ -83,7 +104,8 @@ export async function listPendingWCheckRevisionsForAssignee(
     .from("production_tasks")
     .select("*")
     .eq("assignee_staff_id", staffId)
-    .eq("status", "in_production");
+    .eq("status", "in_production")
+    .is("cancelled_at", null);
 
   if (!tasks || tasks.length === 0) return [];
 

@@ -1,8 +1,10 @@
 -- =============================================================================
 -- verify_production_task_cancellation_readonly.sql
 --
--- 用途: supabase/migrations/20261026000001_production_task_cancellation.sql
---       適用後の read-only 確認。
+-- 用途: 以下 2 本の migration 適用後の read-only 確認。
+--         ・supabase/migrations/20261026000001_production_task_cancellation.sql
+--         ・supabase/migrations/20261118000001_production_task_cancellation_all_statuses.sql
+--       （全status・recurring/spot 両方を取消可能にした仕様が対象）
 --
 -- ・SELECT のみ。DDL / DML / 関数呼び出し（cancel_production_task）は一切行わない。
 -- ・1本のSELECTで「check / expected / actual / ok」の一覧を返す。
@@ -26,6 +28,14 @@ fn_acl as (
     select aclexplode(coalesce(fn.proacl, acldefault('f', (select proowner from pg_proc where oid = fn.oid)))) as a
     from fn
   ) s
+),
+post_fn as (
+  select p.oid, p.prosecdef, p.prosrc
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.proname = 'cancel_post_record'
+    and pg_get_function_identity_arguments(p.oid) = 'p_post_record_id uuid, p_staff_id uuid, p_reason text'
 ),
 log_fn as (
   select p.prosecdef, p.prosrc
@@ -177,17 +187,30 @@ checks as (
          coalesce((select case when prosrc ~* 'for\s+update' then 'ok' else 'not found' end from fn), 'MISSING'),
          exists (select 1 from fn where prosrc ~* 'for\s+update')
   union all
-  select 58, 'RPC guards: recurring / production_waiting / already cancelled / empty reason', 'all contained',
+  select 58, 'RPC guards: already cancelled / empty reason / not found', 'all contained',
          coalesce((select concat_ws(',',
-                    case when prosrc ilike '%''recurring''%' then 'recurring' end,
-                    case when prosrc ilike '%''production_waiting''%' then 'production_waiting' end,
                     case when prosrc ilike '%v_cancelled_at is not null%' then 'already_cancelled' end,
-                    case when prosrc ilike '%btrim(p_reason)%' then 'empty_reason' end) from fn), 'MISSING'),
+                    case when prosrc ilike '%btrim(p_reason)%' then 'empty_reason' end,
+                    case when prosrc ilike '%見つかりません%' then 'not_found' end) from fn), 'MISSING'),
          exists (select 1 from fn
-                 where prosrc ilike '%''recurring''%'
-                   and prosrc ilike '%''production_waiting''%'
-                   and prosrc ilike '%v_cancelled_at is not null%'
-                   and prosrc ilike '%btrim(p_reason)%')
+                 where prosrc ilike '%v_cancelled_at is not null%'
+                   and prosrc ilike '%btrim(p_reason)%'
+                   and prosrc ilike '%見つかりません%')
+  union all
+  -- 20261118000001: task_kind / status による取消制限が無いこと（全status・recurring/spot を取消可能）
+  select 58.1, 'RPC has NO task_kind / status restriction (20261118000001)', 'no recurring / production_waiting / v_status',
+         coalesce((select case when prosrc ilike '%''recurring''%' or prosrc ilike '%''production_waiting''%'
+                                    or prosrc ilike '%v_status%' or prosrc ilike '%v_task_kind%'
+                               then 'OLD RESTRICTION FOUND' else 'none' end from fn), 'MISSING'),
+         exists (select 1 from fn
+                 where prosrc not ilike '%''recurring''%'
+                   and prosrc not ilike '%''production_waiting''%'
+                   and prosrc not ilike '%v_status%'
+                   and prosrc not ilike '%v_task_kind%')
+  union all
+  select 58.2, 'RPC does not change status (sets only cancelled_* columns)', 'no "status =" in UPDATE',
+         coalesce((select case when prosrc ~* 'set[^;]*\mstatus\s*=' then 'STATUS UPDATE FOUND' else 'ok' end from fn), 'MISSING'),
+         exists (select 1 from fn where prosrc !~* 'set[^;]*\mstatus\s*=')
   union all
   select 59, 'RPC does not DELETE', 'no DELETE statement',
          coalesce((select case when prosrc ~* '\mdelete\s+from\M' then 'DELETE FOUND' else 'ok' end from fn), 'MISSING'),
@@ -236,6 +259,29 @@ checks as (
                    and i.indisunique and i.indisvalid
                    and pg_get_indexdef(i.indexrelid) ilike '%(client_id, schedule_rule_id, scheduled_post_date, post_type)%'
                    and pg_get_indexdef(i.indexrelid) not ilike '%cancelled_at%')
+
+  -- ----------------------------------------------------------------- cancel_post_record（20261118000001）
+  union all
+  select 90, 'function public.cancel_post_record(uuid, uuid, text)', 'exists',
+         case when exists (select 1 from post_fn) then 'exists' else 'MISSING' end,
+         exists (select 1 from post_fn)
+  union all
+  select 91, 'cancel_post_record is SECURITY INVOKER', 'prosecdef=false',
+         coalesce((select 'prosecdef=' || prosecdef::text from post_fn), 'MISSING'),
+         exists (select 1 from post_fn where not prosecdef)
+  union all
+  select 92, 'cancel_post_record: 取消済みタスクの status を巻き戻さない', 'status=''completed'' and cancelled_at is null',
+         coalesce((select case when prosrc ~* 'status\s*=\s*''completed''\s+and\s+cancelled_at\s+is\s+null'
+                               then 'ok' else 'NOT FOUND (旧仕様の可能性)' end from post_fn), 'MISSING'),
+         exists (select 1 from post_fn where prosrc ~* 'status\s*=\s*''completed''\s+and\s+cancelled_at\s+is\s+null')
+  union all
+  select 93, 'cancel_post_record: authenticated has EXECUTE', 'true',
+         coalesce((select has_function_privilege('authenticated', oid, 'EXECUTE')::text from post_fn), 'MISSING'),
+         coalesce((select has_function_privilege('authenticated', oid, 'EXECUTE') from post_fn), false)
+  union all
+  select 94, 'cancel_post_record: post_records を DELETE しない', 'no DELETE statement',
+         coalesce((select case when prosrc ~* '\mdelete\s+from\M' then 'DELETE FOUND' else 'ok' end from post_fn), 'MISSING'),
+         exists (select 1 from post_fn where prosrc !~* '\mdelete\s+from\M')
 
   -- ----------------------------------------------------------------- 既存データ整合
   -- （列が未作成でもクエリ全体がエラーにならないよう to_jsonb 経由で参照する）

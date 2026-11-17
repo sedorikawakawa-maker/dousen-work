@@ -13,7 +13,11 @@ export interface PendingConfirmationItem {
   task: ProductionTaskRow;
 }
 
-/** 現在顧客確認待ち(status=waiting)の一覧を、紐づくタスク情報とあわせて取得する。 */
+/**
+ * 現在顧客確認待ち(status=waiting)の一覧を、紐づくタスク情報とあわせて取得する。
+ * 取消済みタスクの確認待ちは通常の業務キュー・催促候補から除外する
+ * （client_confirmations行は履歴として残り、タスク詳細・顧客の確認履歴タブからは参照できる）。
+ */
 export async function listPendingClientConfirmationsWithTasks(
   supabase: TypedClient,
 ): Promise<PendingConfirmationItem[]> {
@@ -26,7 +30,11 @@ export async function listPendingClientConfirmationsWithTasks(
   if (!confirmations || confirmations.length === 0) return [];
 
   const taskIds = [...new Set(confirmations.map((c) => c.production_task_id))];
-  const { data: tasks } = await supabase.from("production_tasks").select("*").in("id", taskIds);
+  const { data: tasks } = await supabase
+    .from("production_tasks")
+    .select("*")
+    .in("id", taskIds)
+    .is("cancelled_at", null);
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
 
   const items: PendingConfirmationItem[] = [];

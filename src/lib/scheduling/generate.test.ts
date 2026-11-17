@@ -210,6 +210,33 @@ describe("generateTasksForRule（取消済みタスクの再生成防止）", ()
     expect(stub.insertedDates()).toContain("2026-11-09");
   });
 
+  it.each([
+    "material_waiting",
+    "production_waiting",
+    "in_production",
+    "wcheck_waiting",
+    "client_confirmation_waiting",
+    "posting_waiting",
+    "completed",
+  ] as const)("status=%s のまま取消されたrecurringタスクの日付も再生成しない", async (status) => {
+    const stub = createSchedulingStub({
+      tasks: [
+        baseTask({
+          id: `cancelled-${status}`,
+          scheduled_post_date: "2026-11-09",
+          status,
+          cancelled_at: "2026-11-01T10:00:00Z",
+          cancel_reason: "取消",
+        }),
+      ],
+    });
+
+    await generateTasksForRule(stub.client, baseRule());
+
+    expect(stub.insertedDates()).not.toContain("2026-11-09");
+    expect(stub.insertedDates()).toContain("2026-11-16");
+  });
+
   it("生成される新規タスクはcancelled_at関連の値を持たない（取消はRPC経由のみ）", async () => {
     const stub = createSchedulingStub({ tasks: [] });
 
@@ -309,5 +336,29 @@ describe("getMonthlySummary（取消済みタスクを集計から除外）", ()
     expect(november.label).toBe("2026年11月");
     expect(november.byPostType.reel.carryover).toBe(1);
     expect(november.byPostType.reel.required).toBe(5);
+  });
+
+  it("取消済みの完了タスクに紐づく有効な投稿実績も、その月の実績本数に数える", async () => {
+    // 制作タスクの取消と投稿実績の取消は別物。post_record自体が有効なら実績として残る。
+    const stub = createSchedulingStub({
+      rules: [baseRule({ monthly_target: 4 })],
+      tasks: [
+        baseTask({ id: "done-normal", status: "completed", scheduled_post_date: "2026-11-02" }),
+        baseTask({
+          id: "done-cancelled",
+          status: "completed",
+          scheduled_post_date: "2026-11-09",
+          cancelled_at: "2026-11-10T00:00:00Z",
+        }),
+      ],
+      postRecordTaskIds: ["done-normal", "done-cancelled"],
+    });
+
+    const rows = await getMonthlySummary(stub.client, "client-1");
+    const november = rows[0];
+
+    expect(november.byPostType.reel.actual).toBe(2);
+    // 完了済みなので持越し・必要本数には影響しない。
+    expect(november.byPostType.reel.carryover).toBe(0);
   });
 });

@@ -278,7 +278,10 @@ export default async function TaskDetailPage({
             >
               <input type="hidden" name="taskId" value={taskId} />
               <p className="text-xs text-red-800">
-                このタスクを取消します。取消後、このスケジュールから同じタスクは自動再生成されません。
+                {task.task_kind === "recurring"
+                  ? "このタスクを取消します。取消後、このスケジュールから同じタスクは自動再生成されません。"
+                  : "このタスクを取消します。"}
+                Wチェック・顧客確認・投稿実績などの履歴は削除されず、このタスク詳細から引き続き参照できます。
               </p>
               <label className="text-xs font-medium text-neutral-700">
                 取消理由（必須）
@@ -290,7 +293,11 @@ export default async function TaskDetailPage({
                 />
               </label>
               <ConfirmSubmitButton
-                confirmMessage="このタスクを取消します。取消後、このスケジュールから同じタスクは自動再生成されません。よろしいですか？"
+                confirmMessage={
+                  task.task_kind === "recurring"
+                    ? "このタスクを取消します。取消後、このスケジュールから同じタスクは自動再生成されません。取消は元に戻せません。よろしいですか？"
+                    : "このタスクを取消します。取消は元に戻せません。よろしいですか？"
+                }
                 className="self-start rounded-full bg-red-600 px-3.5 py-2 text-xs font-medium text-white"
               >
                 取消する（確定）
@@ -361,6 +368,11 @@ export default async function TaskDetailPage({
               <p className="text-xs text-neutral-500">補足: {pendingWCheck.notes}</p>
             ) : null}
 
+            {isCancelled ? (
+              <p className="border-t border-neutral-100 pt-3 text-sm text-neutral-400">
+                取消済みのタスクのため、このWチェックは操作できません（履歴として表示しています）。
+              </p>
+            ) : (
             <div className="grid grid-cols-1 gap-2 border-t border-neutral-100 pt-3 sm:grid-cols-2">
               <form action={approveWCheckAction}>
                 <input type="hidden" name="wcheckId" value={pendingWCheck.id} />
@@ -397,6 +409,7 @@ export default async function TaskDetailPage({
                 </form>
               </details>
             </div>
+            )}
           </div>
         ) : isCancelled ? (
           <p className="text-sm text-neutral-400">取消済みのタスクのためWチェックは登録できません。</p>
@@ -526,6 +539,11 @@ export default async function TaskDetailPage({
               </a>
             ) : null}
 
+            {isCancelled ? (
+              <p className="border-t border-neutral-100 pt-3 text-sm text-neutral-400">
+                取消済みのタスクのため、この顧客確認は操作できません（履歴として表示しています）。
+              </p>
+            ) : (
             <div className="grid grid-cols-1 gap-2 border-t border-neutral-100 pt-3 sm:grid-cols-2">
               <form action={approveClientConfirmationAction}>
                 <input type="hidden" name="confirmationId" value={pendingConfirmation.id} />
@@ -565,7 +583,10 @@ export default async function TaskDetailPage({
                 </form>
               </details>
             </div>
+            )}
           </div>
+        ) : isCancelled ? (
+          <p className="text-sm text-neutral-400">取消済みのタスクのため顧客確認依頼は登録できません。</p>
         ) : task.status === "client_confirmation_waiting" ? (
           <form action={requestClientConfirmationAction} className="flex flex-col gap-2">
             <input type="hidden" name="taskId" value={taskId} />
