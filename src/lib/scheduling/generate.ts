@@ -78,6 +78,12 @@ export async function generateTasksForRule(
       .slice(0, rule.monthly_target);
 
     for (const scheduledDate of candidates) {
+      // 重要: ここは意図的に cancelled_at で絞らない。
+      // 個別取消された（cancelled_atが入った）タスクも「既に存在するタスク」として扱うことで、
+      // 取消済みの日付・投稿種別のタスクが次回の生成で自動再生成されないようにしている。
+      // ここに .is("cancelled_at", null) を足すと取消が無意味になる（再生成されてしまう）。
+      // DB側の部分UNIQUE index(production_tasks_unique_recurring)も取消済みの行を含めて
+      // 効き続けるため、二重の防止になっている。
       const { data: existing } = await supabase
         .from("production_tasks")
         .select("id")
@@ -128,6 +134,10 @@ export async function generateTasksForRule(
  * 「素材待ち(material_waiting)」は担当者が意図的に設定した特別な状態のため、
  * ルール変更・無効化による自動削除・再生成の対象には含めない。
  * 同様に制作開始済み・Wチェック以降のタスクにも一切触れない。
+ *
+ * 個別取消済み(cancelled_at is not null)のタスクも対象外とする。取消済みタスクはstatusが
+ * production_waitingのまま残るため、除外しないとルール変更時に物理削除され、その直後の
+ * 再生成で同じタスクが復活してしまう（人が明示的に行った取消が巻き戻る）。
  */
 async function findSafelyRemovableTaskIds(
   supabase: TypedClient,
@@ -141,6 +151,7 @@ async function findSafelyRemovableTaskIds(
     .eq("schedule_rule_id", ruleId)
     .eq("task_kind", "recurring")
     .eq("status", "production_waiting")
+    .is("cancelled_at", null)
     .gte("scheduled_post_date", today);
 
   return (candidates ?? [])
@@ -184,6 +195,11 @@ export async function removeUnstartedFutureTasksForRule(
 /**
  * 月末を過ぎても未完了の recurring タスクを持越し(is_carryover=true)としてマークする。
  * 常駐cronがない構成のため、ローリング生成の実行タイミングで併せて評価する。
+ *
+ * 取消済みタスクは持越しの対象外（実施義務として翌月へ繰り越さない）。
+ * またproduction_tasksには取消済み行を変更できないトリガーがあるため、
+ * この一括UPDATEで取消済み行に当たるとUPDATE文全体が失敗する。cancelled_at is nullで
+ * 絞ることは意味の面でも実行の面でも必須。
  */
 export async function flagCarryoverForClient(
   supabase: TypedClient,
@@ -198,6 +214,7 @@ export async function flagCarryoverForClient(
     .eq("client_id", clientId)
     .eq("task_kind", "recurring")
     .neq("status", "completed")
+    .is("cancelled_at", null)
     .lt("source_month", currentMonthStart)
     .eq("is_carryover", false);
 }
@@ -268,6 +285,7 @@ export async function getMonthlySummary(
       .select("id, post_type")
       .eq("client_id", clientId)
       .eq("task_kind", "recurring")
+      .is("cancelled_at", null)
       .eq("source_month", monthStart);
 
     const postTypeByTaskId = new Map((monthTasks ?? []).map((t) => [t.id, t.post_type]));
@@ -294,6 +312,7 @@ export async function getMonthlySummary(
       .select("post_type, scheduled_post_date")
       .eq("client_id", clientId)
       .eq("task_kind", "recurring")
+      .is("cancelled_at", null)
       .lt("source_month", monthStart)
       .neq("status", "completed");
 

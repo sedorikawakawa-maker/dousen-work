@@ -25,6 +25,7 @@ export default async function NewOutsourcingRequestPage({
       .select("id, title, post_type, scheduled_post_date")
       .eq("client_id", clientId)
       .neq("status", "completed")
+      .is("cancelled_at", null)
       .order("scheduled_post_date", { ascending: true, nullsFirst: false });
     candidateTasks = data ?? [];
   }

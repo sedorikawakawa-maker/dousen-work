@@ -5,10 +5,14 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentStaff } from "@/lib/auth/session";
 import { assetTypeForPostType } from "@/lib/wchecks/labels";
+import { cancelProductionTask } from "@/lib/scheduling/taskCancellation";
 import type { Database, ProductionTaskStatus } from "@/lib/supabase/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const RESOLVABLE_STATUSES: ProductionTaskStatus[] = ["production_waiting", "in_production"];
+
+/** 取消済みタスクへの操作を分かりやすく拒否するための共通メッセージ（DB側トリガーでも防いでいる）。 */
+const CANCELLED_TASK_ERROR = "このタスクは取消済みのため操作できません";
 
 function emptyToNull(value: FormDataEntryValue | null): string | null {
   const text = String(value ?? "").trim();
@@ -55,6 +59,28 @@ async function notifyProductionStaff(
 }
 
 /**
+ * 自動生成された制作タスクの個別取消。
+ * 物理削除せずcancelled_atを立てることで、投稿スケジュール設定からの自動再生成を防ぐ
+ * （generateTasksForRuleの存在チェックが取消済みタスクも「存在する」と判定する）。
+ * 判定・更新の本体はcancel_production_task RPC側（1トランザクション）。
+ */
+export async function cancelProductionTaskAction(formData: FormData) {
+  const taskId = String(formData.get("taskId"));
+  const reason = String(formData.get("cancelReason") ?? "");
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await cancelProductionTask(supabase, taskId, reason);
+
+  if (error) {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent(error)}`);
+  }
+
+  // ダッシュボード・要対応・スケジュール等の一覧から取消済みタスクが消えた状態を即時反映する。
+  revalidatePath("/", "layout");
+  redirect(`/tasks/${taskId}?saved=1`);
+}
+
+/**
  * 制作待ち・制作中 → 素材待ち への手動変更。
  * 自動生成・自動再生成では使わない、担当者/社員/役員/社長による意図的な状態変更。
  */
@@ -64,9 +90,13 @@ export async function setTaskMaterialWaitingAction(formData: FormData) {
 
   const { data: task } = await supabase
     .from("production_tasks")
-    .select("status")
+    .select("status, cancelled_at")
     .eq("id", taskId)
     .maybeSingle();
+
+  if (task?.cancelled_at) {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
+  }
 
   if (!task || !RESOLVABLE_STATUSES.includes(task.status)) {
     redirect(`/tasks/${taskId}?error=${encodeURIComponent("制作待ち・制作中のタスクのみ素材待ちに変更できます")}`);
@@ -118,9 +148,13 @@ export async function startProductionAction(formData: FormData) {
 
   const { data: task } = await supabase
     .from("production_tasks")
-    .select("status")
+    .select("status, cancelled_at")
     .eq("id", taskId)
     .maybeSingle();
+
+  if (task?.cancelled_at) {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
+  }
 
   if (!task || task.status !== "production_waiting") {
     redirect(`/tasks/${taskId}?error=${encodeURIComponent("制作待ちのタスクのみ制作を開始できます")}`);
@@ -151,12 +185,16 @@ export async function registerWCheckAction(formData: FormData) {
 
   const { data: task } = await supabase
     .from("production_tasks")
-    .select("post_type")
+    .select("post_type, cancelled_at")
     .eq("id", taskId)
     .maybeSingle();
 
   if (!task) {
     redirect(`/tasks/${taskId}?error=${encodeURIComponent("タスクが見つかりません")}`);
+  }
+
+  if (task.cancelled_at) {
+    redirect(`/tasks/${taskId}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
   }
 
   if (!assetUrl) {
@@ -311,9 +349,13 @@ export async function skipWCheckAction(formData: FormData) {
 
   const { data: task } = await supabase
     .from("production_tasks")
-    .select("status")
+    .select("status, cancelled_at")
     .eq("id", taskId)
     .maybeSingle();
+
+  if (task?.cancelled_at) {
+    redirect(`${returnTo}?error=${encodeURIComponent(CANCELLED_TASK_ERROR)}`);
+  }
 
   if (!task || !RESOLVABLE_STATUSES.includes(task.status)) {
     redirect(

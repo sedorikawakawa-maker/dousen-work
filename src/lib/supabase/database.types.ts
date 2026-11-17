@@ -367,6 +367,12 @@ export interface Database {
           completed_at: string | null;
           work_minutes: number | null;
           notes: string | null;
+          // 生成済みタスクの個別取消（物理DELETEしない）。取消済みの行は
+          // generateTasksForRuleの存在チェックでも「既に存在するタスク」として扱われ、
+          // 同じ日付・投稿種別のタスクが自動再生成されない。
+          cancelled_at: string | null;
+          cancelled_by_staff_id: string | null;
+          cancel_reason: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -378,6 +384,9 @@ export interface Database {
           | "completed_at"
           | "work_minutes"
           | "notes"
+          | "cancelled_at"
+          | "cancelled_by_staff_id"
+          | "cancel_reason"
           | "created_at"
           | "updated_at"
         > & {
@@ -387,6 +396,9 @@ export interface Database {
           completed_at?: string | null;
           work_minutes?: number | null;
           notes?: string | null;
+          cancelled_at?: string | null;
+          cancelled_by_staff_id?: string | null;
+          cancel_reason?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1117,6 +1129,13 @@ export interface Database {
         Args: {
           p_post_record_id: string;
           p_staff_id: string;
+          p_reason: string;
+        };
+        Returns: undefined;
+      };
+      cancel_production_task: {
+        Args: {
+          p_task_id: string;
           p_reason: string;
         };
         Returns: undefined;

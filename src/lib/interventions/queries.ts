@@ -123,11 +123,12 @@ export async function getManagementOverview(supabase: TypedClient): Promise<Mana
     listActiveStaff(supabase),
     listPendingWChecksWithTasks(supabase),
     listPendingClientConfirmationsWithTasks(supabase),
-    supabase.from("production_tasks").select("*").neq("status", "completed"),
+    supabase.from("production_tasks").select("*").neq("status", "completed").is("cancelled_at", null),
     supabase
       .from("production_tasks")
       .select("client_id, post_type, source_month, status, scheduled_post_date")
       .eq("task_kind", "recurring")
+      .is("cancelled_at", null)
       .lt("source_month", currentMonthStart),
     getOutsourcingKpis(supabase),
     listOutsourcingRequests(supabase),

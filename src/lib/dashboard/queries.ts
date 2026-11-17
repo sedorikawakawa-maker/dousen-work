@@ -56,6 +56,7 @@ export async function getCurrentMonthClientProgress(
     .select("client_id")
     .in("client_id", clientIds)
     .eq("task_kind", "recurring")
+    .is("cancelled_at", null)
     .lt("source_month", monthStart)
     .neq("status", "completed");
   for (const task of carryoverTasks ?? []) {
@@ -68,6 +69,7 @@ export async function getCurrentMonthClientProgress(
     .select("id, client_id")
     .in("client_id", clientIds)
     .eq("task_kind", "recurring")
+    .is("cancelled_at", null)
     .eq("source_month", monthStart);
   const clientIdByTaskId = new Map((monthTasks ?? []).map((t) => [t.id, t.client_id]));
   const taskIds = (monthTasks ?? []).map((t) => t.id);
@@ -168,6 +170,7 @@ export async function getDashboardData(
       .from("production_tasks")
       .select("*")
       .neq("status", "completed")
+      .is("cancelled_at", null)
       .or(`assignee_staff_id.eq.${staffId},secondary_staff_id.eq.${staffId}`);
     myIncompleteTasks = data ?? [];
   }
@@ -202,6 +205,7 @@ export async function getDashboardData(
     .select("*")
     .is("assignee_staff_id", null)
     .neq("status", "completed")
+    .is("cancelled_at", null)
     .order("scheduled_post_date", { ascending: true, nullsFirst: false })
     .limit(10);
 

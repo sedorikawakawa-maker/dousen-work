@@ -333,6 +333,7 @@ export async function listUpcomingProductionTasks(supabase: TypedClient, clientI
     .select("*")
     .eq("client_id", clientId)
     .neq("status", "completed")
+    .is("cancelled_at", null)
     .order("scheduled_post_date", { ascending: true, nullsFirst: false });
 
   if (error) throw error;

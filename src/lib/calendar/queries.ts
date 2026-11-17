@@ -89,6 +89,7 @@ export async function listScheduledPostsForMonth(
     .from("production_tasks")
     .select("*")
     .in("client_id", clientIds)
+    .is("cancelled_at", null)
     .not("scheduled_post_date", "is", null)
     .gte("scheduled_post_date", monthStartIso(month))
     .lte("scheduled_post_date", monthEndIso(month));

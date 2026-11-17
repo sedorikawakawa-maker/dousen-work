@@ -184,6 +184,7 @@ export async function confirmPostRecordAction(input: ConfirmPostRecordInput): Pr
     .from("production_tasks")
     .select("id, client_id")
     .eq("id", taskId)
+    .is("cancelled_at", null)
     .maybeSingle();
   if (!task || task.client_id !== clientId) {
     if (claimedFileId) await drive.deleteFile(claimedFileId).catch(() => {});

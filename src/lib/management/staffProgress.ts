@@ -54,7 +54,8 @@ export async function getStaffProgressOverview(supabase: TypedClient): Promise<S
         .select(
           "assignee_staff_id, status, production_start_date, wcheck_due_date, client_confirm_due_date, scheduled_post_date",
         )
-        .neq("status", "completed"),
+        .neq("status", "completed")
+        .is("cancelled_at", null),
       supabase
         .from("post_records")
         .select("posted_by_staff_id, posted_at")

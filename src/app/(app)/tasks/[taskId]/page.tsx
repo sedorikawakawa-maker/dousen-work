@@ -18,9 +18,11 @@ import {
   getClientConfirmationElapsedDays,
   getClientConfirmationLevel,
 } from "@/lib/reminders/clientConfirmation";
+import { canCancelProductionTask } from "@/lib/scheduling/taskCancellation";
 import {
   approveClientConfirmationAction,
   approveWCheckAction,
+  cancelProductionTaskAction,
   registerWCheckAction,
   requestClientConfirmationAction,
   requestClientConfirmationRevisionAction,
@@ -83,8 +85,13 @@ export default async function TaskDetailPage({
     ? getClientConfirmationLevel(pendingConfirmation.requested_at)
     : "none";
 
+  // 取消済みタスクは一覧・ダッシュボードからは除外されるが、この詳細画面では
+  // 「取消済み」であることが分かる状態で参照できるようにする（履歴の確認用）。
+  const isCancelled = task.cancelled_at !== null;
+  const canCancel = canCancelProductionTask(task);
+
   const canSetMaterialWaiting =
-    task.status === "production_waiting" || task.status === "in_production";
+    !isCancelled && (task.status === "production_waiting" || task.status === "in_production");
   const materialWaitLevel = getMaterialWaitLevel(task.material_wait_started_at);
   const materialWaitDays = getMaterialWaitElapsedDays(task.material_wait_started_at);
 
@@ -128,10 +135,28 @@ export default async function TaskDetailPage({
       ) : null}
       {error ? <p className="rounded-2xl bg-red-50 px-4 py-2 text-sm text-red-700">{error}</p> : null}
 
+      {isCancelled ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm font-semibold text-red-800">このタスクは取消済みです</p>
+          <p className="mt-1 text-xs text-red-700">
+            {task.cancelled_at ? new Date(task.cancelled_at).toLocaleString("ja-JP") : ""} に
+            {staffNameById.get(task.cancelled_by_staff_id ?? "") ?? "不明"}が取消
+            {task.cancel_reason ? `: ${task.cancel_reason}` : ""}
+          </p>
+          <p className="mt-1 text-xs text-red-700">
+            投稿スケジュール設定から、同じタスクが自動再生成されることはありません。
+          </p>
+        </div>
+      ) : null}
+
       {/* 次にやる操作 */}
       <section className="rounded-2xl border border-neutral-200 bg-white p-5">
         <h2 className="mb-3 text-xs font-semibold text-neutral-500">次にやる操作</h2>
-        {task.status === "posting_waiting" && client ? (
+        {isCancelled ? (
+          <p className="text-sm text-neutral-400">
+            取消済みのタスクのため、対応が必要な操作はありません。
+          </p>
+        ) : task.status === "posting_waiting" && client ? (
           <Link
             href={`/clients/${client.id}/post-records/new?type=${task.post_type}&taskId=${task.id}`}
             className="block w-full rounded-full bg-[var(--accent)] px-4 py-3.5 text-center text-base font-semibold text-white hover:bg-[var(--accent-strong)]"
@@ -233,12 +258,47 @@ export default async function TaskDetailPage({
               </button>
             </div>
           </form>
+        ) : isCancelled ? (
+          <p className="text-sm text-neutral-400">取消済みのタスクのため変更できません。</p>
         ) : (
           <p className="text-sm text-neutral-400">
             現在の状態（{PRODUCTION_TASK_STATUS_LABELS[task.status]}）では変更できません。
           </p>
         )}
       </section>
+
+      {canCancel ? (
+        <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <h2 className="mb-3 text-xs font-semibold text-neutral-500">このタスクの取消</h2>
+          <details>
+            <summary className="cursor-pointer text-sm text-red-600 underline">このタスクを取消</summary>
+            <form
+              action={cancelProductionTaskAction}
+              className="mt-2.5 flex flex-col gap-2.5 rounded-xl border border-red-200 bg-red-50 p-3.5"
+            >
+              <input type="hidden" name="taskId" value={taskId} />
+              <p className="text-xs text-red-800">
+                このタスクを取消します。取消後、このスケジュールから同じタスクは自動再生成されません。
+              </p>
+              <label className="text-xs font-medium text-neutral-700">
+                取消理由（必須）
+                <input
+                  name="cancelReason"
+                  type="text"
+                  required
+                  className="mt-1 w-full rounded-md border border-neutral-300 px-2.5 py-2 text-sm"
+                />
+              </label>
+              <ConfirmSubmitButton
+                confirmMessage="このタスクを取消します。取消後、このスケジュールから同じタスクは自動再生成されません。よろしいですか？"
+                className="self-start rounded-full bg-red-600 px-3.5 py-2 text-xs font-medium text-white"
+              >
+                取消する（確定）
+              </ConfirmSubmitButton>
+            </form>
+          </details>
+        </section>
+      ) : null}
 
       <section className="rounded-2xl border border-neutral-200 bg-white p-5">
         <h2 className="mb-3 text-xs font-semibold text-neutral-500">この顧客の素材一覧</h2>
@@ -338,6 +398,8 @@ export default async function TaskDetailPage({
               </details>
             </div>
           </div>
+        ) : isCancelled ? (
+          <p className="text-sm text-neutral-400">取消済みのタスクのためWチェックは登録できません。</p>
         ) : (
           <>
             <form action={registerWCheckAction} className="flex flex-col gap-3">

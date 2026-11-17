@@ -44,6 +44,7 @@ export async function listCandidateTasksForPostRecord(
     .eq("client_id", clientId)
     .eq("post_type", postType)
     .neq("status", "completed")
+    .is("cancelled_at", null)
     .order("scheduled_post_date", { ascending: true, nullsFirst: false });
 
   if (error) throw error;
